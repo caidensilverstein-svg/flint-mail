@@ -60,6 +60,9 @@ fn base64(data: &[u8]) -> String {
 pub fn register(ctx: &egui::Context) -> Result<Hotkey, String> {
     use global_hotkey::hotkey::{Code, HotKey, Modifiers};
     use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+    if !unsafe { CGPreflightScreenCaptureAccess() } {
+        unsafe { CGRequestScreenCaptureAccess() };
+    }
     let manager = GlobalHotKeyManager::new().map_err(|e| e.to_string())?;
     let hk = HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyB);
     manager.register(hk).map_err(|e| e.to_string())?;

@@ -32,7 +32,7 @@ pub enum NetResult {
     SendFailed { to: String, error: String },
 }
 
-const CACHE_VERSION: u32 = 3;
+const CACHE_VERSION: u32 = 4;
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct MailCache {
@@ -157,7 +157,7 @@ fn parse_message(acc: &Account, uid: u32, raw: &[u8], read: bool) -> Option<Remo
         from_addr,
         to,
         subject,
-        body: plain_text(&parsed).lines().map(decode_entities).collect::<Vec<_>>().join("\n").trim().to_string(),
+        body: plain_text(&parsed).lines().map(decode_entities).collect::<Vec<_>>().join("\n").trim().chars().take(60_000).collect(),
         received,
         read,
         category,

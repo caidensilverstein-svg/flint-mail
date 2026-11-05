@@ -1631,6 +1631,24 @@ impl FlintApp {
         if esc {
             self.cmd_open = false;
         }
+        if !ctx.wants_keyboard_input() && self.screenshot.is_none() {
+            let (new_mail, prefs, one, two) = ctx.input(|i| {
+                let c = i.modifiers.command && !i.modifiers.shift;
+                (c && i.key_pressed(Key::N), c && i.key_pressed(Key::Comma), c && i.key_pressed(Key::Num1), c && i.key_pressed(Key::Num2))
+            });
+            if new_mail {
+                self.composer = Some(self.fresh_composer());
+            }
+            if prefs {
+                self.settings_open = true;
+            }
+            if one {
+                self.mode = Mode::Mail;
+            }
+            if two {
+                self.mode = Mode::Calendar;
+            }
+        }
         if esc {
             self.help_open = false;
             self.snap_open = false;
@@ -4356,9 +4374,12 @@ impl FlintApp {
             return;
         }
         let mut open = true;
-        let rows: [(&str, &str); 19] = [
+        let rows: &[(&str, &str)] = &[
             ("Cmd+Shift+B", "Snapshot your planner (works from any app)"),
             ("Cmd+K", "Command bar"),
+            ("Cmd+N", "New email"),
+            ("Cmd+, ", "Settings"),
+            ("Cmd+1 / Cmd+2", "Mail / Calendar"),
             ("j / k", "Next / previous email"),
             ("e", "Mark done"),
             ("p", "Pin"),
@@ -4379,7 +4400,7 @@ impl FlintApp {
         ];
         egui::Window::new("Keyboard shortcuts").open(&mut open).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, egui::vec2(0.0, 0.0)).show(ctx, |ui| {
             egui::Grid::new("shortcut-grid").num_columns(2).spacing([24.0, 8.0]).show(ui, |ui| {
-                for (k, d) in rows {
+                for (k, d) in rows.iter().copied() {
                     ui.label(RichText::new(k).strong().color(ACCENT));
                     ui.label(RichText::new(d).color(pal.text));
                     ui.end_row();

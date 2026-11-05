@@ -44,6 +44,7 @@ pub struct Mail {
     pub shared: bool,
     pub summary: Option<String>,
     pub can_unsubscribe: bool,
+    pub uid: u32,
 }
 
 impl Mail {
@@ -266,6 +267,7 @@ pub fn sample(now: DateTime<Local>) -> (Vec<Mail>, Vec<SentMail>, Vec<Event>) {
             shared: false,
             summary: None,
             can_unsubscribe: s.cat == Category::Newsletter,
+            uid: 0,
         });
     }
     if let Some(m) = mails.iter_mut().find(|m| m.subject == "Contract redlines") {

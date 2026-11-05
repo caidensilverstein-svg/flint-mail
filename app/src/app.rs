@@ -843,6 +843,7 @@ impl FlintApp {
                             shared: false,
                             summary: None,
                             can_unsubscribe: rm.can_unsubscribe,
+                            uid: rm.uid,
                         };
                         if self.settings.ai_auto_labels && m.labels.is_empty() {
                             if let Some(l) = ai::suggest_label(&m) {
@@ -1268,8 +1269,20 @@ impl FlintApp {
                     self.selected = Some(id);
                     self.comment_input.clear();
                     let auto = self.settings.ai_auto_summary;
+                    let was_unread = self.mail(id).filter(|m| !m.read && m.uid > 0).map(|m| (m.account.clone(), m.uid));
                     if let Some(m) = self.mail_mut(id) {
                         m.read = true;
+                    }
+                    if self.settings.sync_read_to_gmail {
+                        if let Some((account, uid)) = was_unread {
+                            if let Some(acc) = self.real_account(&account) {
+                                if let Some(pw) = mac::keychain_get(&acc.email) {
+                                    std::thread::spawn(move || {
+                                        let _ = net::mark_seen(&acc, &pw, uid);
+                                    });
+                                }
+                            }
+                        }
                     }
                     if auto && self.mail(id).map_or(false, |m| m.summary.is_none()) {
                         self.apply(vec![Act::Summarize(id)], ctx);
@@ -3895,6 +3908,7 @@ impl FlintApp {
                             }
                         }
                     });
+                    changed |= ui.checkbox(&mut self.settings.sync_read_to_gmail, "Mark emails read in Gmail when I open them").changed();
                     let mut login = mac::login_item_enabled();
                     if ui.checkbox(&mut login, "Open Flint when I log in (keeps Cmd+Shift+B ready)").changed() {
                         if let Err(e) = mac::set_login_item(login) {

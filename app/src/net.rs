@@ -116,6 +116,16 @@ pub fn fetch_inbox(acc: &Account, password: &str) -> Result<Vec<RemoteMail>, Str
     Ok(out)
 }
 
+pub fn mark_seen(acc: &Account, password: &str, uid: u32) -> Result<(), String> {
+    let tls = native_tls::TlsConnector::builder().build().map_err(|e| e.to_string())?;
+    let client = imap::connect((acc.imap_host.as_str(), acc.imap_port), acc.imap_host.as_str(), &tls).map_err(|e| e.to_string())?;
+    let mut session = client.login(&acc.username, password).map_err(|(e, _)| e.to_string())?;
+    session.select("INBOX").map_err(|e| e.to_string())?;
+    session.uid_store(uid.to_string(), "+FLAGS (\\Seen)").map_err(|e| e.to_string())?;
+    let _ = session.logout();
+    Ok(())
+}
+
 fn parse_message(acc: &Account, uid: u32, raw: &[u8], read: bool) -> Option<RemoteMail> {
     let parsed = mailparse::parse_mail(raw).ok()?;
     let h = &parsed.headers;
@@ -322,3 +332,20 @@ pub const PROVIDERS: [Provider; 5] = [
     Provider { name: "Yahoo", imap: ("imap.mail.yahoo.com", 993), smtp: ("smtp.mail.yahoo.com", 465) },
     Provider { name: "Fastmail", imap: ("imap.fastmail.com", 993), smtp: ("smtp.fastmail.com", 465) },
 ];
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn mark_seen_on_an_already_read_message_is_a_noop() {
+        let dir = dirs::config_dir().unwrap().join("Flint Mail");
+        let settings: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("settings.json")).unwrap()).unwrap();
+        let acc: Account = serde_json::from_value(settings["accounts"][0].clone()).unwrap();
+        let cache = load_cache(&acc.email);
+        let m = cache.mails.iter().find(|m| m.read).expect("a read message");
+        let pw = crate::mac::keychain_get(&acc.email).expect("password in keychain");
+        mark_seen(&acc, &pw, m.uid).unwrap();
+    }
+}

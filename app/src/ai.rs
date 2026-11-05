@@ -356,7 +356,7 @@ pub fn extract_tasks(path: &std::path::Path, today: chrono::NaiveDate) -> Result
     let img = crate::snap::encode_for_vision(path)?;
     let prompt = format!(
         "This is a screenshot of my work planner or to-do list. Today is {} ({}). List every task, to-do or work item you can read, one entry each, with a short clear title. \
-         If an item shows a due date, deadline, day or time, give it as YYYY-MM-DD or YYYY-MM-DD HH:MM using today's date to resolve words like Monday or tomorrow; otherwise use null. \
+         If an item shows a due date, deadline, day or time, give it as YYYY-MM-DD or YYYY-MM-DD HH:MM using today's date to resolve words like Monday or tomorrow; only include a time when a clock time is clearly written next to the item, otherwise give the date alone; use null when no date is shown. \
          Skip window chrome, menus and anything that is not a task. Answer with JSON only: {{\"tasks\":[{{\"title\":\"...\",\"due\":null}}]}}",
         today.format("%Y-%m-%d"),
         today.format("%A")

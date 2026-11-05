@@ -1365,15 +1365,29 @@ impl FlintApp {
                     self.save_settings();
                     self.toast(format!("Blocked {}", addr));
                 }
-                Act::Reply(id, _all) => {
+                Act::Reply(id, all) => {
                     if let Some(m) = self.mail(id).cloned() {
                         let mut c = Composer::blank();
                         c.from = self.accounts().iter().position(|a| *a == m.account).unwrap_or(0);
                         c.to = m.from_addr.clone();
+                        if all {
+                            let me = m.account.to_lowercase();
+                            for part in m.to.split(',') {
+                                let addr = match (part.find('<'), part.rfind('>')) {
+                                    (Some(a), Some(b)) if b > a => part[a + 1..b].trim().to_string(),
+                                    _ => part.trim().to_string(),
+                                };
+                                if !addr.is_empty() && addr.to_lowercase() != me && !c.to.to_lowercase().contains(&addr.to_lowercase()) {
+                                    c.to.push_str(", ");
+                                    c.to.push_str(&addr);
+                                }
+                            }
+                        }
                         c.to_name = m.from_name.clone();
                         c.subject = if m.subject.starts_with("Re:") { m.subject.clone() } else { format!("Re: {}", m.subject) };
                         c.reply_to = Some(id);
-                        c.body = format!("\n\n{}", self.settings.signature);
+                        let quoted: String = m.body.lines().take(40).map(|l| format!("> {}", l)).collect::<Vec<_>>().join("\n");
+                        c.body = format!("\n\n{}\n\nOn {}, {} <{}> wrote:\n{}", self.settings.signature, m.received.format("%a, %b %-d at %-I:%M %p"), m.from_name, m.from_addr, quoted);
                         self.composer = Some(c);
                     }
                 }

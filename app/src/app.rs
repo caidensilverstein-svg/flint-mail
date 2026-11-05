@@ -2155,7 +2155,25 @@ impl FlintApp {
                     .desired_width(330.0),
             );
             if search.changed() && self.mode == Mode::Calendar {
-                self.mode = Mode::Mail;
+                let q = self.search.trim().to_lowercase();
+                let now = Local::now();
+                let hit = if q.is_empty() {
+                    None
+                } else {
+                    self.events
+                        .iter()
+                        .filter(|e| e.title.to_lowercase().contains(&q))
+                        .min_by_key(|e| (e.start - now).num_seconds().abs())
+                        .map(|e| (e.id, e.start.date_naive()))
+                };
+                match hit {
+                    Some((id, day)) => {
+                        self.selected_event = Some(id);
+                        self.cal_anchor = day;
+                    }
+                    None if !q.is_empty() => self.mode = Mode::Mail,
+                    None => {}
+                }
             }
             if !self.search.is_empty() && ui.small_button("Clear").clicked() {
                 self.search.clear();

@@ -618,3 +618,12 @@ pub fn grant_access_blocking() {
         let _ = Command::new("open").args(["-W", "-a"]).arg(&app).arg("--args").arg("--interactive").arg("--out").arg(&out).status();
     }
 }
+
+pub fn choose_file() -> Option<std::path::PathBuf> {
+    let out = Command::new("osascript").args(["-e", "POSIX path of (choose file with prompt \"Attach a file\")"]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!p.is_empty()).then(|| std::path::PathBuf::from(p))
+}

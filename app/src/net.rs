@@ -26,6 +26,7 @@ pub enum NetResult {
     Synced { account: String, mails: Vec<RemoteMail> },
     Tasks(Result<Vec<crate::mac::Task>, String>),
     RefreshPlanner,
+    Attached(std::path::PathBuf),
     SyncFailed { account: String, error: String },
     Sent { to: String },
     SendFailed { to: String, error: String },
@@ -300,7 +301,16 @@ pub fn send(acc: &Account, password: &str, to: &str, subject: &str, body: &str, 
         for f in files {
             let bytes = std::fs::read(f).map_err(|e| format!("Could not read {}: {}", f.display(), e))?;
             let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "attachment".into());
-            let ct = if name.ends_with(".png") { ContentType::parse("image/png") } else { ContentType::parse("application/octet-stream") }.map_err(|e| e.to_string())?;
+            let mime = match name.rsplit('.').next().map(|e| e.to_lowercase()).as_deref() {
+                Some("png") => "image/png",
+                Some("jpg") | Some("jpeg") => "image/jpeg",
+                Some("gif") => "image/gif",
+                Some("pdf") => "application/pdf",
+                Some("txt") => "text/plain",
+                Some("csv") => "text/csv",
+                _ => "application/octet-stream",
+            };
+            let ct = ContentType::parse(mime).map_err(|e| e.to_string())?;
             mp = mp.singlepart(Attachment::new(name).body(bytes, ct));
         }
         builder.multipart(mp).map_err(|e| e.to_string())?

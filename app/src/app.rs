@@ -947,6 +947,13 @@ impl FlintApp {
         }
         while let Ok(r) = self.net_rx.try_recv() {
             match r {
+                NetResult::Attached(p) => {
+                    if let Some(c) = self.composer.as_mut() {
+                        if !c.attachments.contains(&p) {
+                            c.attachments.push(p);
+                        }
+                    }
+                }
                 NetResult::RefreshPlanner => {
                     self.cal_syncing = false;
                     self.tasks_syncing = false;
@@ -3507,6 +3514,16 @@ impl FlintApp {
                     });
                     if ui.button("Signature").clicked() {
                         c.body = format!("{}\n\n{}", c.body.trim_end(), self.settings.signature);
+                    }
+                    if ui.button("Attach file").clicked() {
+                        let tx = self.net_tx.clone();
+                        let ctx = ui.ctx().clone();
+                        std::thread::spawn(move || {
+                            if let Some(p) = mac::choose_file() {
+                                let _ = tx.send(NetResult::Attached(p));
+                                ctx.request_repaint();
+                            }
+                        });
                     }
                     ui.menu_button("Share availability", |ui| {
                         ui.label(RichText::new("Free times from your calendar").size(11.0).color(pal.sub));

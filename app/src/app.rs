@@ -1030,6 +1030,9 @@ impl FlintApp {
                         .map(|rm| (rm.from_name.clone(), rm.subject.clone()))
                         .collect();
                     self.apply_remote(&account, mails);
+                    if self.selected.is_none() {
+                        self.selected = self.visible_mails(Folder::SmartInbox).first().map(|m| m.id);
+                    }
                     if first_load {
                         self.toast(format!("{}: {} emails synced", account, n));
                     } else if self.settings.notifications && !fresh.is_empty() {

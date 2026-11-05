@@ -411,9 +411,30 @@ return out
     Ok(out)
 }
 
+fn run_helper(args: &[String]) -> bool {
+    if let Some(app) = helper_app() {
+        return Command::new("open")
+            .args(["-W", "-g", "-j", "-a"])
+            .arg(&app)
+            .arg("--args")
+            .args(args)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    }
+    match helper_path() {
+        Some(p) => Command::new(p).args(args).output().map(|o| o.status.success()).unwrap_or(false),
+        None => false,
+    }
+}
+
+pub fn add_event(calendar: &str, title: &str, start: chrono::DateTime<chrono::Local>, end: chrono::DateTime<chrono::Local>, location: &str, link: &str) -> bool {
+    run_helper(&["addevent".to_string(), calendar.to_string(), title.to_string(), start.timestamp().to_string(), end.timestamp().to_string(), location.to_string(), link.to_string()])
+}
+
 pub fn complete_reminder(id: &str) {
-    if let Some(p) = helper_path() {
-        let _ = Command::new(p).args(["complete", id]).output();
+    if has_helper() {
+        run_helper(&["complete".to_string(), id.to_string()]);
         return;
     }
     let script = format!("tell application \"Reminders\" to set completed of (first reminder whose id is \"{}\") to true", id.replace('"', ""));
@@ -537,17 +558,11 @@ fn planner_once() -> Result<PlannerData, String> {
 }
 
 pub fn add_reminder(title: &str, due: Option<chrono::DateTime<chrono::Local>>) -> bool {
-    match helper_path() {
-        Some(p) => {
-            let mut c = Command::new(p);
-            c.args(["add", title]);
-            if let Some(d) = due {
-                c.arg(d.timestamp().to_string());
-            }
-            c.output().map(|o| o.status.success()).unwrap_or(false)
-        }
-        None => false,
+    let mut args = vec!["add".to_string(), title.to_string()];
+    if let Some(d) = due {
+        args.push(d.timestamp().to_string());
     }
+    run_helper(&args)
 }
 
 fn login_plist_path() -> Option<std::path::PathBuf> {

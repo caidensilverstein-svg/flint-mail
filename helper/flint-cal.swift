@@ -44,6 +44,19 @@ func work() {
         exit(0)
     }
 
+    if args.count >= 7 && args[1] == "addevent" {
+        guard ask(.event) else { exit(1) }
+        let e = EKEvent(eventStore: store)
+        e.title = args[3]
+        e.startDate = Date(timeIntervalSince1970: Double(args[4]) ?? 0)
+        e.endDate = Date(timeIntervalSince1970: Double(args[5]) ?? 0)
+        e.location = args[6]
+        if args.count > 7, !args[7].isEmpty { e.url = URL(string: args[7]) }
+        e.calendar = store.calendars(for: .event).first(where: { $0.title == args[2] && $0.allowsContentModifications }) ?? store.defaultCalendarForNewEvents
+        try? store.save(e, span: .thisEvent, commit: true)
+        exit(0)
+    }
+
     var out: [String: Any] = ["names": [String](), "events": [Any](), "tasks": [Any](), "errors": [String]()]
     var errors: [String] = []
 

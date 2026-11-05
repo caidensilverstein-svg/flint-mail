@@ -441,6 +441,9 @@ impl FlintApp {
         if shot_mode && std::env::var_os("FLINT_EVENT_DETAIL").is_some() {
             app.selected_event = app.events.iter().find(|e| e.link.is_some()).or(app.events.first()).map(|e| e.id);
         }
+        if shot_mode && std::env::var_os("FLINT_EVENT_FORM").is_some() {
+            app.event_form = Some(app.new_event_form(None));
+        }
         if shot_mode && std::env::var_os("FLINT_COMPOSE").is_some() {
             app.composer = Some(Composer::blank());
         }
@@ -3686,6 +3689,13 @@ impl FlintApp {
                     });
                     self.selected_event = Some(id);
                     self.cal_anchor = d;
+                    if mac::has_helper() && self.screenshot.is_none() {
+                        let cal = self.calendars.get(f.calendar).map(|c| c.name.clone()).unwrap_or_default();
+                        let (title, loc, link, end) = (f.title.trim().to_string(), f.location.clone(), f.link.trim().to_string(), start + Duration::minutes(f.minutes));
+                        std::thread::spawn(move || {
+                            mac::add_event(&cal, if title.is_empty() { "New event" } else { &title }, start, end, &loc, &link);
+                        });
+                    }
                     self.toast("Event added");
                     return;
                 }

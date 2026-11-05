@@ -3213,15 +3213,19 @@ impl FlintApp {
                 pal.text
             };
             p.text(num_pos, Align2::CENTER_CENTER, d.day().to_string(), FontId::proportional(12.5), col);
-            let mut todays: Vec<&Event> = events.iter().filter(|e| e.start.date_naive() == d).collect();
-            todays.sort_by_key(|e| e.start);
+            let mut todays: Vec<&Event> = events
+                .iter()
+                .filter(|e| e.start.date_naive() == d || (e.all_day && e.start.date_naive() <= d && d < e.end.date_naive()))
+                .collect();
+            todays.sort_by_key(|e| (!e.all_day, e.start));
             let max = ((ch - 30.0) / 18.0).floor().max(0.0) as usize;
             for (k, e) in todays.iter().take(max).enumerate() {
                 let r = egui::Rect::from_min_size(egui::pos2(cell.left() + 4.0, cell.top() + 28.0 + k as f32 * 18.0), egui::vec2(cw - 8.0, 16.0));
                 let color = theme::CALENDAR_COLORS[e.calendar % theme::CALENDAR_COLORS.len()];
                 p.rect_filled(r, Rounding::same(4.0), color.gamma_multiply(0.18));
                 p.circle_filled(egui::pos2(r.left() + 7.0, r.center().y), 3.0, color);
-                let g = one_line(ui, &format!("{} {}", e.start.format("%-I:%M"), e.title), 11.0, pal.text, r.width() - 16.0);
+                let label = if e.all_day { e.title.clone() } else { format!("{} {}", e.start.format("%-I:%M"), e.title) };
+                let g = one_line(ui, &label, 11.0, pal.text, r.width() - 16.0);
                 p.galley(egui::pos2(r.left() + 14.0, r.top() + 1.0), g, pal.text);
                 hit.push((r, e.id, d));
             }

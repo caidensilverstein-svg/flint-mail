@@ -94,7 +94,7 @@ impl MenuBar {
             ("Open Agenda", TrayAction::Agenda),
             ("New Email", TrayAction::NewEmail),
             ("Open Calendar", TrayAction::Calendar),
-            ("Snapshot My Planner (Cmd+Shift+B)", TrayAction::Snapshot),
+            ("Capture Screen to Tasks (Cmd+Shift+B)", TrayAction::Snapshot),
             ("Ask AI About My Inbox", TrayAction::AskAi),
             ("Settings...", TrayAction::Settings),
         ];

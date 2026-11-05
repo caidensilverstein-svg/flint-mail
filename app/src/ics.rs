@@ -250,7 +250,7 @@ pub fn parse(body: &str, win_start: DateTime<Local>, win_end: DateTime<Local>) -
             if seen.insert((r.uid.clone(), s.timestamp()), ()).is_some() {
                 continue;
             }
-            events.push(MacEvent { calendar: cal_name.clone(), title: if r.title.is_empty() { "(no title)".into() } else { r.title.clone() }, start: s, end: e, location: r.location.clone(), all_day: start.all_day });
+            events.push(MacEvent { calendar: cal_name.clone(), title: if r.title.is_empty() { "(no title)".into() } else { r.title.clone() }, start: s, end: e, location: r.location.clone(), all_day: start.all_day, recurs: false, notes: String::new() });
         }
     }
     Ok((cal_name, events))

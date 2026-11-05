@@ -72,14 +72,15 @@ fn call_local(system: &str, prompt: &str) -> Result<String, String> {
         "model": LOCAL_MODEL,
         "stream": false,
         "think": false,
-        "options": { "num_predict": AI_MAX_TOKENS },
+        "keep_alive": "30m",
+        "options": { "num_predict": AI_MAX_TOKENS, "num_ctx": 8192 },
         "messages": [
             { "role": "system", "content": system },
             { "role": "user", "content": prompt },
         ],
     });
     let v: serde_json::Value = ureq::post(&format!("{}/api/chat", LOCAL_URL))
-        .timeout(Duration::from_secs(180))
+        .timeout(Duration::from_secs(300))
         .send_json(body)
         .map_err(|e| format!("Local AI failed: {}", e))?
         .into_json()
@@ -340,4 +341,72 @@ pub fn mail_context(mails: &[&Mail]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n---\n")
+}
+
+
+pub struct CapturedTask {
+    pub title: String,
+    pub due: Option<String>,
+}
+
+pub fn extract_tasks(path: &std::path::Path, today: chrono::NaiveDate) -> Result<Vec<CapturedTask>, String> {
+    if !local_model_ready() {
+        return Err("The local AI (Ollama) isn't running. Open Ollama and press Cmd+Shift+B again, or add the tasks by hand below.".into());
+    }
+    let img = crate::snap::encode_for_vision(path)?;
+    let prompt = format!(
+        "This is a screenshot of my work planner or to-do list. Today is {} ({}). List every task, to-do or work item you can read, one entry each, with a short clear title. \
+         If an item shows a due date, deadline, day or time, give it as YYYY-MM-DD or YYYY-MM-DD HH:MM using today's date to resolve words like Monday or tomorrow; otherwise use null. \
+         Skip window chrome, menus and anything that is not a task. Answer with JSON only: {{\"tasks\":[{{\"title\":\"...\",\"due\":null}}]}}",
+        today.format("%Y-%m-%d"),
+        today.format("%A")
+    );
+    let body = serde_json::json!({
+        "model": LOCAL_MODEL,
+        "stream": false,
+        "think": false,
+        "format": "json",
+        "keep_alive": "30m",
+        "options": { "num_predict": 1500, "num_ctx": 8192, "temperature": 0.1 },
+        "messages": [{ "role": "user", "content": prompt, "images": [img] }],
+    });
+    let v: serde_json::Value = ureq::post(&format!("{}/api/chat", LOCAL_URL))
+        .timeout(Duration::from_secs(420))
+        .send_json(body)
+        .map_err(|e| format!("Local AI failed: {}", e))?
+        .into_json()
+        .map_err(|e| e.to_string())?;
+    let text = v["message"]["content"].as_str().unwrap_or("");
+    parse_tasks(text)
+}
+
+pub fn parse_tasks(text: &str) -> Result<Vec<CapturedTask>, String> {
+    let start = text.find(|c| c == '{' || c == '[').ok_or("The AI did not return any tasks")?;
+    let end = text.rfind(|c| c == '}' || c == ']').ok_or("The AI did not return any tasks")?;
+    let v: serde_json::Value = serde_json::from_str(&text[start..=end]).map_err(|e| format!("Could not read the AI answer: {}", e))?;
+    let arr = if v.is_array() { v.as_array().cloned() } else { v["tasks"].as_array().cloned() }.unwrap_or_default();
+    let mut out = Vec::new();
+    for t in arr {
+        let title = t["title"].as_str().or_else(|| t.as_str()).unwrap_or("").trim().to_string();
+        if title.is_empty() || out.iter().any(|o: &CapturedTask| o.title.eq_ignore_ascii_case(&title)) {
+            continue;
+        }
+        let due = t["due"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("null"));
+        out.push(CapturedTask { title, due });
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+
+    #[test]
+    fn parses_task_json() {
+        let t = parse_tasks("```json\n{\"tasks\":[{\"title\":\"Write report\",\"due\":\"2026-11-06\"},{\"title\":\"Call Sam\",\"due\":null},{\"title\":\"write report\"}]}\n```").unwrap();
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].due.as_deref(), Some("2026-11-06"));
+        assert!(t[1].due.is_none());
+        assert!(parse_tasks("no json here").is_err());
+    }
 }

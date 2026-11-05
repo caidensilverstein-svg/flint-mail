@@ -94,6 +94,7 @@ pub struct Event {
     pub notes: String,
     pub notified: bool,
     pub all_day: bool,
+    pub recurs: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -326,6 +327,7 @@ pub fn sample(now: DateTime<Local>) -> (Vec<Mail>, Vec<SentMail>, Vec<Event>) {
             // sample meetings never raise real Mac notifications
             notified: true,
             all_day: false,
+            recurs: false,
         });
     };
     let d = |n: i64| today + Duration::days(n);

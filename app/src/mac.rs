@@ -260,6 +260,10 @@ pub struct MacEvent {
     pub end: chrono::DateTime<chrono::Local>,
     pub location: String,
     pub all_day: bool,
+    #[serde(default)]
+    pub recurs: bool,
+    #[serde(default)]
+    pub notes: String,
 }
 
 // Reads the Mac Calendar app (which includes Google/iCloud calendars added in
@@ -340,7 +344,7 @@ end run
             let f: Vec<&str> = rec.trim_matches(|c| c == '\n' || c == '\r').split('\u{1f}').collect();
             if f.first() == Some(&"E") && f.len() >= 6 {
                 if let (Some(start), Some(end)) = (parse(f[3]), parse(f[4])) {
-                    events.push(MacEvent { calendar: f[1].into(), title: f[2].into(), start, end, location: f[5].into(), all_day: f.get(6) == Some(&"1") });
+                    events.push(MacEvent { calendar: f[1].into(), title: f[2].into(), start, end, location: f[5].into(), all_day: f.get(6) == Some(&"1"), recurs: false, notes: String::new() });
                 }
             }
         }
@@ -448,6 +452,10 @@ pub fn update_event(calendar: &str, old_title: &str, old_start: chrono::DateTime
 
 pub fn delete_event(calendar: &str, title: &str, start: chrono::DateTime<chrono::Local>) -> bool {
     run_helper(&["deleteevent".to_string(), calendar.to_string(), title.to_string(), start.timestamp().to_string()])
+}
+
+pub fn event_op(spec: &serde_json::Value) -> bool {
+    run_helper(&["event".to_string(), spec.to_string()])
 }
 
 pub fn complete_reminder(id: &str) {
@@ -558,6 +566,8 @@ fn planner_once() -> Result<PlannerData, String> {
                 end,
                 location: e["location"].as_str().unwrap_or("").into(),
                 all_day: e["all_day"].as_bool().unwrap_or(false),
+                recurs: e["recurs"].as_bool().unwrap_or(false),
+                notes: e["notes"].as_str().unwrap_or("").into(),
             });
         }
     }
@@ -573,6 +583,20 @@ fn planner_once() -> Result<PlannerData, String> {
     }
     let undetermined = v["status"]["calendar"].as_i64() == Some(0) || v["status"]["reminders"].as_i64() == Some(0);
     Ok(PlannerData { undetermined, names: strs(&v["names"]), events, tasks, errors: strs(&v["errors"]) })
+}
+
+pub fn add_reminders(items: &[(String, Option<chrono::DateTime<chrono::Local>>, bool)]) -> bool {
+    let arr: Vec<serde_json::Value> = items
+        .iter()
+        .map(|(t, d, date_only)| {
+            let mut o = serde_json::json!({ "title": t, "date_only": date_only });
+            if let Some(d) = d {
+                o["due"] = serde_json::json!(d.timestamp());
+            }
+            o
+        })
+        .collect();
+    run_helper(&["addtasks".to_string(), serde_json::Value::Array(arr).to_string()])
 }
 
 pub fn add_reminder(title: &str, due: Option<chrono::DateTime<chrono::Local>>) -> bool {

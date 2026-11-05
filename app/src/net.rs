@@ -26,6 +26,7 @@ pub enum NetResult {
     Synced { account: String, mails: Vec<RemoteMail> },
     Tasks(Result<Vec<crate::mac::Task>, String>),
     RefreshPlanner,
+    Capture(Result<Vec<(String, Option<String>)>, String>),
     Attached(std::path::PathBuf),
     SyncFailed { account: String, error: String },
     Sent { to: String },

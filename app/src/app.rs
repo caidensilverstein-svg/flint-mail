@@ -177,16 +177,119 @@ impl Composer {
     }
 }
 
+struct CapItem {
+    on: bool,
+    title: String,
+    due: String,
+}
+
+struct Capture {
+    path: PathBuf,
+    tex: Option<egui::TextureHandle>,
+    reading: bool,
+    error: String,
+    items: Vec<CapItem>,
+}
+
 struct EventForm {
     title: String,
     date: String,
     time: String,
-    minutes: i64,
+    end_date: String,
+    end_time: String,
+    all_day: bool,
     calendar: usize,
     location: String,
     link: String,
     attendees: String,
+    notes: String,
+    alert: i64,
+    repeat: usize,
+    rep_interval: u32,
+    rep_unit: usize,
+    rep_days: [bool; 7],
+    rep_end: usize,
+    rep_until: String,
+    rep_count: u32,
+    busy: bool,
     editing: Option<u64>,
+    recurs: bool,
+    future: bool,
+}
+
+const REPEATS: [&str; 9] = ["Never", "Every day", "Weekdays", "Every week", "Every 2 weeks", "Every month", "Every year", "Custom", "Keep current repeat"];
+const ALERTS: [(i64, &str); 8] = [(-1, "None"), (0, "At start"), (5, "5 minutes before"), (10, "10 minutes before"), (15, "15 minutes before"), (30, "30 minutes before"), (60, "1 hour before"), (1440, "1 day before")];
+
+impl EventForm {
+    fn rule(&self, start: DateTime<Local>) -> Option<(&'static str, u32, Vec<u32>)> {
+        let wk = |d: chrono::Weekday| d.number_from_sunday();
+        match self.repeat {
+            1 => Some(("daily", 1, vec![])),
+            2 => Some(("weekly", 1, (1..=5).map(|i| wk(chrono::Weekday::try_from(i as u8 - 1).unwrap_or(chrono::Weekday::Mon))).collect())),
+            3 => Some(("weekly", 1, vec![wk(start.weekday())])),
+            4 => Some(("weekly", 2, vec![wk(start.weekday())])),
+            5 => Some(("monthly", 1, vec![])),
+            6 => Some(("yearly", 1, vec![])),
+            7 => {
+                let n = self.rep_interval.max(1);
+                match self.rep_unit {
+                    0 => Some(("daily", n, vec![])),
+                    1 => {
+                        let mut days: Vec<u32> = (0..7).filter(|i| self.rep_days[*i]).map(|i| wk(chrono::Weekday::try_from(i as u8).unwrap_or(chrono::Weekday::Mon))).collect();
+                        if days.is_empty() {
+                            days.push(wk(start.weekday()));
+                        }
+                        Some(("weekly", n, days))
+                    }
+                    2 => Some(("monthly", n, vec![])),
+                    _ => Some(("yearly", n, vec![])),
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn until(&self) -> Option<DateTime<Local>> {
+        if self.rep_end == 1 {
+            NaiveDate::parse_from_str(self.rep_until.trim(), "%Y-%m-%d").ok().map(|d| mech::at(d, 23, 59))
+        } else {
+            None
+        }
+    }
+
+    fn occurrences(&self, start: DateTime<Local>) -> Vec<DateTime<Local>> {
+        let Some((freq, n, days)) = self.rule(start) else { return vec![start] };
+        let until = self.until();
+        let limit = if self.rep_end == 2 { self.rep_count.max(1) as usize } else { 400 };
+        let horizon = Local::now().date_naive() + Duration::days(75);
+        let first = start.date_naive();
+        let monday = first - Duration::days(first.weekday().num_days_from_monday() as i64);
+        let mut out = Vec::new();
+        let mut d = first;
+        while d <= horizon && out.len() < limit {
+            let hit = match freq {
+                "daily" => (d - first).num_days() % n as i64 == 0,
+                "weekly" => {
+                    let weeks = (d - monday).num_days().div_euclid(7);
+                    weeks % n as i64 == 0 && days.contains(&d.weekday().number_from_sunday())
+                }
+                "monthly" => d.day() == first.day() && ((d.year() - first.year()) * 12 + d.month() as i32 - first.month() as i32) % n as i32 == 0,
+                _ => d.day() == first.day() && d.month() == first.month() && (d.year() - first.year()) % n as i32 == 0,
+            };
+            if hit || d == first {
+                let s = mech::at(d, start.hour(), start.minute());
+                if until.map(|u| s > u).unwrap_or(false) {
+                    break;
+                }
+                out.push(s);
+            }
+            d += Duration::days(1);
+        }
+        if out.is_empty() {
+            out.push(start);
+        }
+        out
+    }
 }
 
 #[derive(Default)]
@@ -296,6 +399,7 @@ pub struct FlintApp {
     shot_requested: bool,
     help_open: bool,
     confirm_delete: Option<u64>,
+    confirm_future: bool,
     last_sync_error: String,
     refresh_planner: bool,
     mail_state: HashMap<String, MailState>,
@@ -310,6 +414,7 @@ pub struct FlintApp {
     snap_tex: Option<egui::TextureHandle>,
     snap_path: Option<PathBuf>,
     snap_open: bool,
+    capture: Option<Capture>,
     #[cfg(target_os = "macos")]
     hotkey: Option<crate::snap::Hotkey>,
     quitting: bool,
@@ -420,6 +525,7 @@ impl FlintApp {
             shot_requested: false,
             help_open: false,
             confirm_delete: None,
+            confirm_future: false,
             last_sync_error: String::new(),
             refresh_planner: false,
             mail_state: if shot_mode { HashMap::new() } else { mail_state_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default() },
@@ -434,6 +540,7 @@ impl FlintApp {
             snap_tex: None,
             snap_path: None,
             snap_open: false,
+            capture: None,
             #[cfg(target_os = "macos")]
             hotkey: None,
             quitting: false,
@@ -955,6 +1062,16 @@ impl FlintApp {
                         }
                     }
                 }
+                NetResult::Capture(res) => {
+                    if let Some(c) = self.capture.as_mut() {
+                        c.reading = false;
+                        match res {
+                            Ok(items) if items.is_empty() => c.error = "No tasks found on that screen. Add them by hand below.".into(),
+                            Ok(items) => c.items = items.into_iter().map(|(title, due)| CapItem { on: true, title, due: due.unwrap_or_default() }).collect(),
+                            Err(e) => c.error = e,
+                        }
+                    }
+                }
                 NetResult::RefreshPlanner => {
                     self.cal_syncing = false;
                     self.tasks_syncing = false;
@@ -989,6 +1106,7 @@ impl FlintApp {
                     self.calendars = names.iter().map(|n| CalendarInfo { name: n.clone(), visible: true }).collect();
                     let was_empty = self.events.is_empty();
                     let notified_before: HashSet<(String, i64)> = self.events.iter().filter(|e| e.notified).map(|e| (e.title.clone(), e.start.timestamp())).collect();
+                    let notes_before: std::collections::HashMap<(String, i64), String> = self.events.iter().filter(|e| !e.notes.trim().is_empty()).map(|e| ((e.title.clone(), e.start.timestamp()), e.notes.clone())).collect();
                     self.events.clear();
                     let n = events.len();
                     for e in events {
@@ -998,16 +1116,17 @@ impl FlintApp {
                         let already = notified_before.contains(&(e.title.clone(), e.start.timestamp()));
                         self.events.push(Event {
                             id,
-                            title: e.title,
+                            title: e.title.clone(),
                             start: e.start,
                             end: e.end,
                             calendar,
                             link,
                             location: e.location,
                             attendees: Vec::new(),
-                            notes: String::new(),
+                            notes: if e.notes.trim().is_empty() { notes_before.get(&(e.title.clone(), e.start.timestamp())).cloned().unwrap_or_default() } else { e.notes.clone() },
                             notified: already || e.start < now || e.all_day,
                             all_day: e.all_day,
+                            recurs: e.recurs,
                         });
                     }
                     if warnings.is_empty() {
@@ -1244,7 +1363,7 @@ impl FlintApp {
                     }
                     TrayAction::NewEmail => self.composer = Some(self.fresh_composer()),
                     TrayAction::Calendar => self.mode = Mode::Calendar,
-                    TrayAction::Snapshot => self.start_snapshot(ctx),
+                    TrayAction::Snapshot => self.begin_capture(ctx, crate::snap::capture_screen()),
                     TrayAction::AskAi => {
                         self.mode = Mode::Mail;
                         self.copilot_open = true;
@@ -3000,8 +3119,11 @@ impl FlintApp {
         let all_day_on = |e: &Event, d: NaiveDate| {
             e.all_day && e.start.date_naive() <= d && d < e.end.date_naive().max(e.start.date_naive() + Duration::days(1))
         };
+        let tasks_on = |d: NaiveDate| -> Vec<(String, bool)> {
+            self.tasks.iter().filter(|t| t.due.map(|x| x.date_naive() == d).unwrap_or(false)).map(|t| (t.title.clone(), t.due.map(|x| x.date_naive() < now.date_naive()).unwrap_or(false))).collect()
+        };
         let all_day_rows = (0..days)
-            .map(|i| events.iter().filter(|e| all_day_on(e, start + Duration::days(i))).count())
+            .map(|i| events.iter().filter(|e| all_day_on(e, start + Duration::days(i))).count() + tasks_on(start + Duration::days(i)).len())
             .max()
             .unwrap_or(0)
             .min(3);
@@ -3044,6 +3166,22 @@ impl FlintApp {
                     let g = one_line(ui, &label, 11.0, pal.text, er.width() - 10.0);
                     sp.galley(egui::pos2(er.left() + 5.0, er.top() + 2.0), g, pal.text);
                     shits.push((er, e.id));
+                }
+                let shown = day_events.len().min(3);
+                let day_tasks = tasks_on(d);
+                for (k, (title, _)) in day_tasks.iter().enumerate() {
+                    let row = shown + k;
+                    if row >= 3 {
+                        break;
+                    }
+                    let left = day_tasks.len() + shown - 3;
+                    let y = srect.top() + 4.0 + row as f32 * 20.0;
+                    let er = egui::Rect::from_min_size(egui::pos2(x + 3.0, y), egui::vec2(col_w - 6.0, 17.0));
+                    let label = if row == 2 && day_tasks.len() + shown > 3 { format!("{} (+{} more)", title, left) } else { title.clone() };
+                    sp.rect_filled(er, Rounding::same(4.0), GREEN.gamma_multiply(if self.settings.dark { 0.40 } else { 0.22 }));
+                    sp.circle_stroke(egui::pos2(er.left() + 9.0, er.center().y), 4.0, Stroke::new(1.3_f32, GREEN));
+                    let g = one_line(ui, &label, 11.0, pal.text, er.width() - 24.0);
+                    sp.galley(egui::pos2(er.left() + 18.0, er.top() + 2.0), g, pal.text);
                 }
             }
             sp.line_segment([egui::pos2(srect.left() + gutter, srect.bottom()), egui::pos2(srect.right(), srect.bottom())], Stroke::new(1.0_f32, pal.border));
@@ -3286,12 +3424,26 @@ impl FlintApp {
             title: String::new(),
             date: t.format("%Y-%m-%d").to_string(),
             time: t.format("%H:%M").to_string(),
-            minutes: 30,
+            end_date: (t + Duration::minutes(30)).format("%Y-%m-%d").to_string(),
+            end_time: (t + Duration::minutes(30)).format("%H:%M").to_string(),
+            all_day: false,
             calendar: 0,
             location: String::new(),
             link: String::new(),
             attendees: String::new(),
+            notes: String::new(),
+            alert: 10,
+            repeat: 0,
+            rep_interval: 1,
+            rep_unit: 1,
+            rep_days: [false; 7],
+            rep_end: 0,
+            rep_until: String::new(),
+            rep_count: 10,
+            busy: true,
             editing: None,
+            recurs: false,
+            future: false,
         }
     }
 
@@ -3498,36 +3650,59 @@ impl FlintApp {
         });
         ui.add_space(8.0);
         if ui.button("Edit").clicked() {
-            self.event_form = Some(EventForm {
-                title: e.title.clone(),
-                date: e.start.format("%Y-%m-%d").to_string(),
-                time: e.start.format("%H:%M").to_string(),
-                minutes: (e.end - e.start).num_minutes().max(1),
-                calendar: e.calendar,
-                location: e.location.clone(),
-                link: e.link.clone().unwrap_or_default(),
-                attendees: e.attendees.join(", "),
-                editing: Some(e.id),
-            });
+            let mut f = self.new_event_form(Some(e.start));
+            f.title = e.title.clone();
+            f.end_date = e.end.format("%Y-%m-%d").to_string();
+            f.end_time = e.end.format("%H:%M").to_string();
+            f.all_day = e.all_day;
+            f.calendar = e.calendar;
+            f.location = e.location.clone();
+            f.link = e.link.clone().unwrap_or_default();
+            f.attendees = e.attendees.join(", ");
+            f.notes = e.notes.clone();
+            f.alert = -2;
+            f.recurs = e.recurs;
+            f.repeat = if e.recurs { 8 } else { 0 };
+            f.editing = Some(e.id);
+            self.event_form = Some(f);
         }
         ui.add_space(4.0);
         let confirming = self.confirm_delete == Some(e.id);
-        let label = if confirming { "Click again to delete from your calendar" } else { "Delete event" };
-        if ui.add(egui::Button::new(RichText::new(label).color(RED)).frame(false)).clicked() {
-            if confirming {
-                if mac::has_helper() && self.screenshot.is_none() {
-                    let cal = self.calendars.get(e.calendar).map(|c| c.name.clone()).unwrap_or_default();
-                    let (title, start) = (e.title.clone(), e.start);
-                    std::thread::spawn(move || {
-                        mac::delete_event(&cal, &title, start);
-                    });
+        let mut delete: Option<bool> = None;
+        let options: Vec<(bool, &str, &str)> = if e.recurs {
+            vec![(false, "Delete this event only", "Click again to delete only this one"), (true, "Delete this and future events", "Click again to delete this and all future ones")]
+        } else {
+            vec![(false, "Delete event", "Click again to delete from your calendar")]
+        };
+        for (future, idle, armed) in options {
+            let arm = confirming && self.confirm_future == future;
+            if ui.add(egui::Button::new(RichText::new(if arm { armed } else { idle }).color(RED)).frame(false)).clicked() {
+                if arm {
+                    delete = Some(future);
+                } else {
+                    self.confirm_delete = Some(e.id);
+                    self.confirm_future = future;
                 }
-                self.events.remove(idx);
-                self.selected_event = None;
-                self.confirm_delete = None;
-            } else {
-                self.confirm_delete = Some(e.id);
             }
+        }
+        if let Some(future) = delete {
+            if mac::has_helper() && self.screenshot.is_none() {
+                let spec = serde_json::json!({
+                    "op": "delete",
+                    "span": if future { "future" } else { "this" },
+                    "old": { "title": e.title, "start": e.start.timestamp(), "calendar": self.calendars.get(e.calendar).map(|c| c.name.clone()).unwrap_or_default() },
+                });
+                let tx = self.net_tx.clone();
+                let ctx = ui.ctx().clone();
+                std::thread::spawn(move || {
+                    mac::event_op(&spec);
+                    let _ = tx.send(NetResult::RefreshPlanner);
+                    ctx.request_repaint();
+                });
+            }
+            self.events.remove(idx);
+            self.selected_event = None;
+            self.confirm_delete = None;
         }
     }
 
@@ -3804,50 +3979,180 @@ impl FlintApp {
         let mut open = true;
         let mut save = false;
         let mut find_time = false;
-        egui::Window::new(if f.editing.is_some() { "Edit Event" } else { "New Event" }).open(&mut open).collapsible(false).resizable(false).default_pos([420.0, 140.0]).show(ctx, |ui| {
-            egui::Grid::new("event-grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+        let weekday_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+        let shift = |s: &str, days: i64| -> String { NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map(|d| (d + Duration::days(days)).format("%Y-%m-%d").to_string()).unwrap_or_else(|_| s.to_string()) };
+        egui::Window::new(if f.editing.is_some() { "Edit Event" } else { "New Event" }).open(&mut open).collapsible(false).resizable(false).default_pos([420.0, 110.0]).show(ctx, |ui| {
+            egui::Grid::new("event-grid").num_columns(2).spacing([8.0, 7.0]).show(ui, |ui| {
                 ui.label("Title");
-                ui.text_edit_singleline(&mut f.title);
+                ui.add(egui::TextEdit::singleline(&mut f.title).desired_width(300.0));
                 ui.end_row();
-                ui.label("Date");
-                ui.add(egui::TextEdit::singleline(&mut f.date).hint_text("YYYY-MM-DD"));
+                ui.label("All day");
+                ui.checkbox(&mut f.all_day, "");
                 ui.end_row();
                 ui.label("Starts");
                 ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut f.time).desired_width(60.0).hint_text("HH:MM"));
-                    if ui.small_button("Find a free time").clicked() {
+                    if ui.small_button("<").clicked() {
+                        f.date = shift(&f.date, -1);
+                    }
+                    ui.add(egui::TextEdit::singleline(&mut f.date).desired_width(86.0).hint_text("YYYY-MM-DD"));
+                    if ui.small_button(">").clicked() {
+                        f.date = shift(&f.date, 1);
+                    }
+                    if !f.all_day {
+                        ui.add(egui::TextEdit::singleline(&mut f.time).desired_width(48.0).hint_text("HH:MM"));
+                    }
+                });
+                ui.end_row();
+                ui.label("");
+                ui.horizontal(|ui| {
+                    let today = Local::now().date_naive();
+                    if ui.small_button("Today").clicked() {
+                        f.date = today.format("%Y-%m-%d").to_string();
+                    }
+                    if ui.small_button("Tomorrow").clicked() {
+                        f.date = (today + Duration::days(1)).format("%Y-%m-%d").to_string();
+                    }
+                    if ui.small_button("Next week").clicked() {
+                        f.date = (today + Duration::days(7)).format("%Y-%m-%d").to_string();
+                    }
+                    if !f.all_day && ui.small_button("Find a free time").clicked() {
                         find_time = true;
                     }
                 });
                 ui.end_row();
-                ui.label("Length");
+                ui.label("Ends");
                 ui.horizontal(|ui| {
-                    for m in [15, 30, 45, 60, 90] {
-                        ui.selectable_value(&mut f.minutes, m, format!("{}m", m));
+                    if ui.small_button("<").clicked() {
+                        f.end_date = shift(&f.end_date, -1);
+                    }
+                    ui.add(egui::TextEdit::singleline(&mut f.end_date).desired_width(86.0).hint_text("YYYY-MM-DD"));
+                    if ui.small_button(">").clicked() {
+                        f.end_date = shift(&f.end_date, 1);
+                    }
+                    if !f.all_day {
+                        ui.add(egui::TextEdit::singleline(&mut f.end_time).desired_width(48.0).hint_text("HH:MM"));
+                    }
+                });
+                ui.end_row();
+                if !f.all_day {
+                    ui.label("Length");
+                    ui.horizontal(|ui| {
+                        for m in [15, 30, 45, 60, 90, 120] {
+                            if ui.small_button(if m >= 60 && m % 60 == 0 { format!("{}h", m / 60) } else { format!("{}m", m) }).clicked() {
+                                let s = NaiveDate::parse_from_str(f.date.trim(), "%Y-%m-%d").ok().zip(f.time.trim().split_once(':').and_then(|(h, mi)| Some((h.parse::<u32>().ok()?, mi.parse::<u32>().ok()?))));
+                                if let Some((d, (h, mi))) = s {
+                                    let e = mech::at(d, h.min(23), mi.min(59)) + Duration::minutes(m);
+                                    f.end_date = e.format("%Y-%m-%d").to_string();
+                                    f.end_time = e.format("%H:%M").to_string();
+                                }
+                            }
+                        }
+                    });
+                    ui.end_row();
+                }
+                ui.label("Repeat");
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_source("rep-kind").selected_text(REPEATS[f.repeat]).show_ui(ui, |ui| {
+                        for (i, name) in REPEATS.iter().enumerate() {
+                            if i == 8 && !f.recurs {
+                                continue;
+                            }
+                            ui.selectable_value(&mut f.repeat, i, *name);
+                        }
+                    });
+                });
+                ui.end_row();
+                if f.repeat == 7 {
+                    ui.label("Every");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::DragValue::new(&mut f.rep_interval).range(1..=99));
+                        egui::ComboBox::from_id_source("rep-unit").selected_text(["days", "weeks", "months", "years"][f.rep_unit]).width(80.0).show_ui(ui, |ui| {
+                            for (i, n) in ["days", "weeks", "months", "years"].iter().enumerate() {
+                                ui.selectable_value(&mut f.rep_unit, i, *n);
+                            }
+                        });
+                    });
+                    ui.end_row();
+                    if f.rep_unit == 1 {
+                        ui.label("On");
+                        ui.horizontal(|ui| {
+                            for (i, n) in weekday_names.iter().enumerate() {
+                                ui.toggle_value(&mut f.rep_days[i], *n);
+                            }
+                        });
+                        ui.end_row();
+                    }
+                }
+                if f.repeat >= 1 && f.repeat <= 7 {
+                    ui.label("Stops");
+                    ui.horizontal(|ui| {
+                        egui::ComboBox::from_id_source("rep-end").selected_text(["Never", "On date", "After"][f.rep_end]).width(80.0).show_ui(ui, |ui| {
+                            for (i, n) in ["Never", "On date", "After"].iter().enumerate() {
+                                ui.selectable_value(&mut f.rep_end, i, *n);
+                            }
+                        });
+                        if f.rep_end == 1 {
+                            ui.add(egui::TextEdit::singleline(&mut f.rep_until).desired_width(86.0).hint_text("YYYY-MM-DD"));
+                        } else if f.rep_end == 2 {
+                            ui.add(egui::DragValue::new(&mut f.rep_count).range(1..=999).suffix(" times"));
+                        }
+                    });
+                    ui.end_row();
+                }
+                ui.label("Alert");
+                egui::ComboBox::from_id_source("alert").selected_text(if f.alert == -2 { "Keep current" } else { ALERTS.iter().find(|a| a.0 == f.alert).map(|a| a.1).unwrap_or("None") }).show_ui(ui, |ui| {
+                    if f.editing.is_some() {
+                        ui.selectable_value(&mut f.alert, -2, "Keep current");
+                    }
+                    for (m, n) in ALERTS {
+                        ui.selectable_value(&mut f.alert, m, n);
                     }
                 });
                 ui.end_row();
                 ui.label("Calendar");
-                ui.horizontal(|ui| {
+                let cal_name = self.calendars.get(f.calendar).map(|c| c.name.clone()).unwrap_or_default();
+                egui::ComboBox::from_id_source("cal-pick").selected_text(cal_name).show_ui(ui, |ui| {
                     for (i, c) in self.calendars.iter().enumerate() {
                         ui.selectable_value(&mut f.calendar, i, &c.name);
                     }
                 });
                 ui.end_row();
+                ui.label("Show as");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut f.busy, true, "Busy");
+                    ui.selectable_value(&mut f.busy, false, "Free");
+                });
+                ui.end_row();
                 ui.label("Location");
-                ui.text_edit_singleline(&mut f.location);
+                ui.add(egui::TextEdit::singleline(&mut f.location).desired_width(300.0));
                 ui.end_row();
                 ui.label("Video link");
-                ui.add(egui::TextEdit::singleline(&mut f.link).hint_text("Paste a Zoom, Teams or Meet link"));
+                ui.add(egui::TextEdit::singleline(&mut f.link).desired_width(300.0).hint_text("Paste a Zoom, Teams or Meet link"));
                 ui.end_row();
                 ui.label("Guests");
-                ui.add(egui::TextEdit::singleline(&mut f.attendees).hint_text("Names, separated by commas"));
+                ui.add(egui::TextEdit::singleline(&mut f.attendees).desired_width(300.0).hint_text("Names, separated by commas"));
+                ui.end_row();
+                ui.label("Notes");
+                ui.add(egui::TextEdit::multiline(&mut f.notes).desired_rows(3).desired_width(300.0));
                 ui.end_row();
             });
-            ui.label(RichText::new("You'll get a Mac notification one minute before it starts.").size(11.5).color(pal.sub));
+            if f.editing.is_some() && f.recurs {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Apply to").size(12.0).color(pal.sub));
+                    ui.selectable_value(&mut f.future, false, "This event");
+                    ui.selectable_value(&mut f.future, true, "This and future events");
+                });
+            }
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if primary_button(ui, "Save").clicked() {
                     save = true;
+                }
+                if f.repeat >= 1 && f.repeat <= 7 {
+                    if let Ok(d) = NaiveDate::parse_from_str(f.date.trim(), "%Y-%m-%d") {
+                        let n = f.occurrences(mech::at(d, 9, 0)).len();
+                        ui.label(RichText::new(format!("{} on your calendar in the next 10 weeks", n)).size(11.5).color(pal.sub));
+                    }
                 }
             });
         });
@@ -3855,69 +4160,117 @@ impl FlintApp {
             if let Some(t) = self.free_slots(Local::now(), 1).first() {
                 f.date = t.format("%Y-%m-%d").to_string();
                 f.time = t.format("%H:%M").to_string();
+                let e = *t + Duration::minutes(30);
+                f.end_date = e.format("%Y-%m-%d").to_string();
+                f.end_time = e.format("%H:%M").to_string();
             }
         }
         if save {
-            let date = NaiveDate::parse_from_str(f.date.trim(), "%Y-%m-%d");
-            let mut parts = f.time.trim().split(':');
-            let h = parts.next().and_then(|x| x.parse::<u32>().ok());
-            let m = parts.next().and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
-            match (date, h) {
-                (Ok(d), Some(h)) if h < 24 => {
+            let parse_t = |s: &str| -> Option<(u32, u32)> {
+                let (h, m) = s.trim().split_once(':').unwrap_or((s.trim(), "0"));
+                let (h, m) = (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?);
+                (h < 24 && m < 60).then_some((h, m))
+            };
+            let sd = NaiveDate::parse_from_str(f.date.trim(), "%Y-%m-%d");
+            let ed = NaiveDate::parse_from_str(f.end_date.trim(), "%Y-%m-%d").or(sd);
+            let times = if f.all_day { Some(((0, 0), (23, 59))) } else { parse_t(&f.time).zip(parse_t(&f.end_time)) };
+            match (sd, ed, times) {
+                (Ok(d), Ok(ed), Some(((h, m), (eh, em)))) => {
                     let start = mech::at(d, h, m);
+                    let mut end = mech::at(ed, eh, em);
+                    if end <= start {
+                        end = if f.all_day { mech::at(d, 23, 59) } else { start + Duration::minutes(30) };
+                    }
+                    let title = if f.title.trim().is_empty() { "New event".to_string() } else { f.title.trim().to_string() };
+                    let link = f.link.trim().to_string();
+                    let guests: Vec<String> = f.attendees.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                    let cal = self.calendars.get(f.calendar).map(|c| c.name.clone()).unwrap_or_default();
+                    let mut spec = serde_json::json!({
+                        "op": if f.editing.is_some() { "update" } else { "add" },
+                        "calendar": cal,
+                        "title": title,
+                        "start": start.timestamp(),
+                        "end": end.timestamp(),
+                        "all_day": f.all_day,
+                        "location": f.location,
+                        "url": link,
+                        "notes": f.notes,
+                        "busy": f.busy,
+                        "span": if f.future { "future" } else { "this" },
+                    });
+                    if f.alert != -2 {
+                        spec["alerts"] = if f.alert < 0 { serde_json::json!([]) } else { serde_json::json!([f.alert]) };
+                    }
+                    if f.repeat != 8 {
+                        spec["repeat"] = match f.rule(start) {
+                            Some((freq, interval, days)) => {
+                                let mut r = serde_json::json!({ "freq": freq, "interval": interval, "days": if freq == "weekly" { days } else { vec![] } });
+                                if let Some(u) = f.until() {
+                                    r["end_date"] = serde_json::json!(u.timestamp());
+                                } else if f.rep_end == 2 {
+                                    r["count"] = serde_json::json!(f.rep_count.max(1));
+                                }
+                                r
+                            }
+                            None => serde_json::Value::Null,
+                        };
+                    }
+                    let mut old_event: Option<Event> = None;
                     if let Some(eid) = f.editing {
                         if let Some(i) = self.events.iter().position(|e| e.id == eid) {
                             let old = self.events[i].clone();
-                            let end = start + Duration::minutes(f.minutes);
-                            let title = if f.title.trim().is_empty() { "New event".to_string() } else { f.title.trim().to_string() };
-                            let link = f.link.trim().to_string();
-                            if mac::has_helper() && self.screenshot.is_none() {
-                                let cal = self.calendars.get(old.calendar).map(|c| c.name.clone()).unwrap_or_default();
-                                let (ot, os, nt, loc, lk) = (old.title.clone(), old.start, title.clone(), f.location.clone(), link.clone());
-                                std::thread::spawn(move || {
-                                    mac::update_event(&cal, &ot, os, &nt, start, end, &loc, &lk);
-                                });
-                            }
+                            spec["old"] = serde_json::json!({ "title": old.title, "start": old.start.timestamp(), "calendar": self.calendars.get(old.calendar).map(|c| c.name.clone()).unwrap_or_default() });
+                            old_event = Some(old);
                             let ev = &mut self.events[i];
-                            ev.title = title;
+                            ev.title = title.clone();
                             ev.start = start;
                             ev.end = end;
+                            ev.all_day = f.all_day;
                             ev.location = f.location.clone();
-                            ev.link = (!link.is_empty()).then(|| link);
-                            ev.attendees = f.attendees.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                            ev.link = (!link.is_empty()).then(|| link.clone());
+                            ev.attendees = guests.clone();
+                            ev.notes = f.notes.clone();
                             ev.notified = start < Local::now();
-                            self.cal_anchor = d;
-                            self.toast("Event updated");
-                            return;
                         }
                     }
-                    let id = self.id();
-                    self.events.push(Event {
-                        id,
-                        title: if f.title.trim().is_empty() { "New event".into() } else { f.title.clone() },
-                        start,
-                        end: start + Duration::minutes(f.minutes),
-                        calendar: f.calendar,
-                        location: f.location.clone(),
-                        link: (!f.link.trim().is_empty()).then(|| f.link.trim().to_string()),
-                        attendees: f.attendees.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
-                        notes: String::new(),
-                        notified: false,
-                        all_day: false,
-                    });
-                    self.selected_event = Some(id);
+                    if old_event.is_none() {
+                        let dur = end - start;
+                        let starts = if f.repeat >= 1 && f.repeat <= 7 { f.occurrences(start) } else { vec![start] };
+                        let mut first_id = None;
+                        for s in starts {
+                            let id = self.id();
+                            first_id.get_or_insert(id);
+                            self.events.push(Event {
+                                id,
+                                title: title.clone(),
+                                start: s,
+                                end: s + dur,
+                                calendar: f.calendar,
+                                location: f.location.clone(),
+                                link: (!link.is_empty()).then(|| link.clone()),
+                                attendees: guests.clone(),
+                                notes: f.notes.clone(),
+                                notified: s < Local::now() || f.all_day,
+                                all_day: f.all_day,
+                                recurs: f.repeat >= 1 && f.repeat <= 7,
+                            });
+                        }
+                        self.selected_event = first_id;
+                    }
                     self.cal_anchor = d;
                     if mac::has_helper() && self.screenshot.is_none() {
-                        let cal = self.calendars.get(f.calendar).map(|c| c.name.clone()).unwrap_or_default();
-                        let (title, loc, link, end) = (f.title.trim().to_string(), f.location.clone(), f.link.trim().to_string(), start + Duration::minutes(f.minutes));
+                        let tx = self.net_tx.clone();
+                        let ctx = ctx.clone();
                         std::thread::spawn(move || {
-                            mac::add_event(&cal, if title.is_empty() { "New event" } else { &title }, start, end, &loc, &link);
+                            mac::event_op(&spec);
+                            let _ = tx.send(NetResult::RefreshPlanner);
+                            ctx.request_repaint();
                         });
                     }
-                    self.toast("Event added");
+                    self.toast(if old_event.is_some() { "Event updated" } else if f.repeat >= 1 && f.repeat <= 7 { "Repeating event added" } else { "Event added" });
                     return;
                 }
-                _ => self.toast("Check the date (YYYY-MM-DD) and time (HH:MM)"),
+                _ => self.toast("Check the dates (YYYY-MM-DD) and times (HH:MM)"),
             }
         }
         if open {
@@ -4070,7 +4423,7 @@ impl FlintApp {
                         }
                     });
                     ui.add_space(6.0);
-                    ui.label(RichText::new("Press ? anywhere for all keyboard shortcuts. Cmd+Shift+B snapshots your planner, Cmd+K opens commands.").size(12.0).color(pal.sub));
+                    ui.label(RichText::new("Press ? anywhere for all keyboard shortcuts. Cmd+Shift+B captures your screen into tasks, Cmd+K opens commands.").size(12.0).color(pal.sub));
                     if !self.settings.blocked.is_empty() {
                         ui.add_space(6.0);
                         ui.label(RichText::new("Blocked senders").strong());
@@ -4268,7 +4621,7 @@ impl FlintApp {
             ("Sync all accounts".into(), 15),
             ("Mark all notifications as read".into(), 16),
             ("Go to Snoozed".into(), 17),
-            ("Snapshot my planner (Cmd+Shift+B)".into(), 18),
+            ("Capture my screen to tasks (Cmd+Shift+B)".into(), 18),
             ("Keyboard shortcuts (?)".into(), 19),
             ("Brief me on my day".into(), 20),
         ];
@@ -4331,7 +4684,7 @@ impl FlintApp {
                 9 => acts.extend(sel.map(|s| Act::Snooze(s, Preset::Tomorrow))),
                 10 => acts.extend(sel.map(Act::Summarize)),
                 11 => acts.extend(sel.map(|s| Act::Reply(s, false))),
-                18 => self.start_snapshot(ctx),
+                18 => self.begin_capture(ctx, crate::snap::capture_screen()),
                 19 => self.help_open = true,
                 20 => self.brief_me(ctx),
                 12 => {
@@ -4450,7 +4803,7 @@ impl FlintApp {
         }
         let mut open = true;
         let rows: &[(&str, &str)] = &[
-            ("Cmd+Shift+B", "Snapshot your planner (works from any app)"),
+            ("Cmd+Shift+B", "Capture your current screen and turn it into tasks (works from any app)"),
             ("Cmd+K", "Command bar"),
             ("Cmd+N", "New email"),
             ("Cmd+, ", "Settings"),
@@ -4489,17 +4842,145 @@ impl FlintApp {
     }
 
     fn poll_hotkey(&mut self, ctx: &egui::Context) {
+        if let Ok(text) = std::fs::read_to_string("/tmp/flint-capture") {
+            let _ = std::fs::remove_file("/tmp/flint-capture");
+            let p = PathBuf::from(text.trim());
+            self.begin_capture(ctx, if p.exists() { Ok(p) } else { crate::snap::capture_screen() });
+        }
         if !self.cal_syncing && !self.tasks_syncing && std::fs::remove_file("/tmp/flint-snap").is_ok() {
             self.start_snapshot(ctx);
         }
         #[cfg(target_os = "macos")]
         {
-            let fired = self.hotkey.as_ref().map(|h| h.fired.swap(false, std::sync::atomic::Ordering::SeqCst)).unwrap_or(false);
-            if fired {
-                self.start_snapshot(ctx);
+            let shot = match self.hotkey.as_ref() {
+                Some(h) if h.fired.swap(false, std::sync::atomic::Ordering::SeqCst) => h.shot.lock().unwrap_or_else(|e| e.into_inner()).take(),
+                _ => None,
+            };
+            if let Some(res) = shot {
+                self.begin_capture(ctx, res);
             }
         }
         let _ = ctx;
+    }
+
+    fn begin_capture(&mut self, ctx: &egui::Context, res: Result<PathBuf, String>) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.hidden = false;
+        self.cmd_open = false;
+        match res {
+            Ok(path) => {
+                let tex = image::open(&path).ok().map(|img| {
+                    let img = img.thumbnail(900, 900).to_rgba8();
+                    let size = [img.width() as usize, img.height() as usize];
+                    ctx.load_texture("capture", egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()), egui::TextureOptions::LINEAR)
+                });
+                self.capture = Some(Capture { path: path.clone(), tex, reading: true, error: String::new(), items: Vec::new() });
+                let tx = self.net_tx.clone();
+                let ctx = ctx.clone();
+                let today = Local::now().date_naive();
+                std::thread::spawn(move || {
+                    let r = ai::extract_tasks(&path, today).map(|v| v.into_iter().map(|t| (t.title, t.due)).collect());
+                    let _ = tx.send(NetResult::Capture(r));
+                    ctx.request_repaint();
+                });
+            }
+            Err(e) => {
+                self.capture = Some(Capture { path: PathBuf::new(), tex: None, reading: false, error: e, items: Vec::new() });
+            }
+        }
+        ctx.request_repaint();
+    }
+
+    fn capture_window(&mut self, ctx: &egui::Context, pal: Pal) {
+        let Some(mut c) = self.capture.take() else { return };
+        let mut open = true;
+        let mut add = false;
+        egui::Window::new("Capture to tasks").open(&mut open).collapsible(false).default_pos([200.0, 70.0]).show(ctx, |ui| {
+            ui.horizontal_top(|ui| {
+                if let Some(tex) = &c.tex {
+                    let w = 300.0;
+                    let ratio = tex.size_vec2().y / tex.size_vec2().x;
+                    ui.add(egui::Image::new((tex.id(), egui::vec2(w, w * ratio))).rounding(6.0));
+                }
+                ui.vertical(|ui| {
+                    ui.set_width(380.0);
+                    if c.reading {
+                        ui.label(RichText::new("Reading your screen with the local AI. The first run can take a minute.").size(12.5).color(pal.sub));
+                    }
+                    if !c.error.is_empty() {
+                        ui.label(RichText::new(&c.error).size(12.5).color(ORANGE));
+                    }
+                    let mut remove = None;
+                    for (i, it) in c.items.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut it.on, "");
+                            ui.add(egui::TextEdit::singleline(&mut it.title).desired_width(220.0));
+                            ui.add(egui::TextEdit::singleline(&mut it.due).desired_width(104.0).hint_text("no date"));
+                            if ui.small_button("x").clicked() {
+                                remove = Some(i);
+                            }
+                        });
+                    }
+                    if let Some(i) = remove {
+                        c.items.remove(i);
+                    }
+                    if !c.reading && ui.small_button("+ Add a task").clicked() {
+                        c.items.push(CapItem { on: true, title: String::new(), due: String::new() });
+                    }
+                    ui.add_space(6.0);
+                    let n = c.items.iter().filter(|i| i.on && !i.title.trim().is_empty()).count();
+                    ui.horizontal(|ui| {
+                        if n > 0 && primary_button(ui, &format!("Add {} to my tasks", n)).clicked() {
+                            add = true;
+                        }
+                        if !c.path.as_os_str().is_empty() {
+                            if ui.button("Show in Finder").clicked() {
+                                #[cfg(target_os = "macos")]
+                                crate::snap::reveal(&c.path);
+                            }
+                        }
+                    });
+                    ui.label(RichText::new("Tasks go to Reminders and show in your calendar as work, not events. Dates: YYYY-MM-DD or YYYY-MM-DD HH:MM.").size(11.0).color(pal.sub));
+                });
+            });
+        });
+        if add {
+            let mut batch: Vec<(String, Option<DateTime<Local>>, bool)> = Vec::new();
+            for it in c.items.iter().filter(|i| i.on && !i.title.trim().is_empty()) {
+                let s = it.due.trim();
+                let (due, date_only) = if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M") {
+                    (dt.and_local_timezone(Local).single(), false)
+                } else if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+                    (Some(mech::at(d, 9, 0)), true)
+                } else {
+                    (None, false)
+                };
+                batch.push((it.title.trim().to_string(), due, date_only));
+            }
+            for (t, d, _) in &batch {
+                self.tasks.push(mac::Task { id: String::new(), list: "Reminders".into(), title: t.clone(), due: *d, flagged: false });
+            }
+            let n = batch.len();
+            self.mode = Mode::Calendar;
+            self.cal_view = CalView::Week;
+            self.cal_anchor = Local::now().date_naive();
+            if mac::has_helper() {
+                let tx = self.net_tx.clone();
+                let ctx = ctx.clone();
+                std::thread::spawn(move || {
+                    mac::add_reminders(&batch);
+                    let _ = tx.send(NetResult::RefreshPlanner);
+                    ctx.request_repaint();
+                });
+            }
+            self.toast(format!("{} tasks added to your calendar", n));
+            open = false;
+        }
+        if open {
+            self.capture = Some(c);
+        }
     }
 
     fn start_snapshot(&mut self, ctx: &egui::Context) {
@@ -4743,6 +5224,7 @@ impl eframe::App for FlintApp {
         self.overlays(ctx, pal);
         self.handle_screenshot(ctx);
         self.handle_snapshot(ctx, pal);
+        self.capture_window(ctx, pal);
         self.help_window(ctx, pal);
 
         let wait = if self.pending.is_some() || !self.toasts.is_empty() { 0.25 } else { 1.0 };
@@ -4771,5 +5253,39 @@ mod quick_task_tests {
         let (t, d) = parse_quick_task("tomorrow", now);
         assert_eq!(t, "tomorrow");
         assert!(d.is_none());
+    }
+}
+
+#[cfg(test)]
+mod repeat_tests {
+    use super::*;
+
+    fn form(repeat: usize) -> EventForm {
+        let app_form = EventForm {
+            title: String::new(), date: String::new(), time: String::new(), end_date: String::new(), end_time: String::new(), all_day: false, calendar: 0,
+            location: String::new(), link: String::new(), attendees: String::new(), notes: String::new(), alert: 10, repeat, rep_interval: 1, rep_unit: 1,
+            rep_days: [false; 7], rep_end: 0, rep_until: String::new(), rep_count: 10, busy: true, editing: None, recurs: false, future: false,
+        };
+        app_form
+    }
+
+    #[test]
+    fn weekdays_skip_weekends_and_count_limits() {
+        let mut f = form(2);
+        f.rep_end = 2;
+        f.rep_count = 7;
+        let start = mech::at(Local::now().date_naive() + Duration::days(1), 9, 0);
+        let occ = f.occurrences(start);
+        assert_eq!(occ.len(), 7);
+        assert!(occ.iter().all(|d| d.weekday().number_from_monday() <= 5));
+    }
+
+    #[test]
+    fn biweekly_steps_two_weeks() {
+        let f = form(4);
+        let start = mech::at(Local::now().date_naive(), 9, 0);
+        let occ = f.occurrences(start);
+        assert!(occ.len() >= 2);
+        assert_eq!((occ[1] - occ[0]).num_days(), 14);
     }
 }

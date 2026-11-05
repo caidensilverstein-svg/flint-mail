@@ -291,6 +291,7 @@ pub struct FlintApp {
     screenshot: Option<PathBuf>,
     shot_requested: bool,
     help_open: bool,
+    confirm_delete: Option<u64>,
     last_sync_error: String,
     refresh_planner: bool,
     mail_state: HashMap<String, MailState>,
@@ -414,6 +415,7 @@ impl FlintApp {
             screenshot,
             shot_requested: false,
             help_open: false,
+            confirm_delete: None,
             last_sync_error: String::new(),
             refresh_planner: false,
             mail_state: if shot_mode { HashMap::new() } else { mail_state_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default() },
@@ -3384,9 +3386,23 @@ impl FlintApp {
             }
         });
         ui.add_space(8.0);
-        if ui.add(egui::Button::new(RichText::new("Delete event").color(RED)).frame(false)).clicked() {
-            self.events.remove(idx);
-            self.selected_event = None;
+        let confirming = self.confirm_delete == Some(e.id);
+        let label = if confirming { "Click again to delete from your calendar" } else { "Delete event" };
+        if ui.add(egui::Button::new(RichText::new(label).color(RED)).frame(false)).clicked() {
+            if confirming {
+                if mac::has_helper() && self.screenshot.is_none() {
+                    let cal = self.calendars.get(e.calendar).map(|c| c.name.clone()).unwrap_or_default();
+                    let (title, start) = (e.title.clone(), e.start);
+                    std::thread::spawn(move || {
+                        mac::delete_event(&cal, &title, start);
+                    });
+                }
+                self.events.remove(idx);
+                self.selected_event = None;
+                self.confirm_delete = None;
+            } else {
+                self.confirm_delete = Some(e.id);
+            }
         }
     }
 

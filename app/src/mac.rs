@@ -432,6 +432,10 @@ pub fn add_event(calendar: &str, title: &str, start: chrono::DateTime<chrono::Lo
     run_helper(&["addevent".to_string(), calendar.to_string(), title.to_string(), start.timestamp().to_string(), end.timestamp().to_string(), location.to_string(), link.to_string()])
 }
 
+pub fn delete_event(calendar: &str, title: &str, start: chrono::DateTime<chrono::Local>) -> bool {
+    run_helper(&["deleteevent".to_string(), calendar.to_string(), title.to_string(), start.timestamp().to_string()])
+}
+
 pub fn complete_reminder(id: &str) {
     if has_helper() {
         run_helper(&["complete".to_string(), id.to_string()]);

@@ -57,6 +57,16 @@ func work() {
         exit(0)
     }
 
+    if args.count >= 5 && args[1] == "deleteevent" {
+        guard ask(.event), let t = Double(args[4]) else { exit(1) }
+        let start = Date(timeIntervalSince1970: t)
+        let pred = store.predicateForEvents(withStart: start.addingTimeInterval(-60), end: start.addingTimeInterval(60), calendars: nil)
+        if let e = store.events(matching: pred).first(where: { $0.title == args[3] && $0.calendar.title == args[2] && $0.calendar.allowsContentModifications && abs($0.startDate.timeIntervalSince(start)) < 1 }) {
+            try? store.remove(e, span: .thisEvent, commit: true)
+        }
+        exit(0)
+    }
+
     var out: [String: Any] = ["names": [String](), "events": [Any](), "tasks": [Any](), "errors": [String]()]
     var errors: [String] = []
 

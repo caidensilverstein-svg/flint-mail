@@ -7,6 +7,14 @@ A Spark-style mail and calendar app for macOS, written in Rust with eframe/egui.
 - Cmd+Shift+B anywhere: snapshot of the planner and tasks, saved to ~/Pictures/Flint Planner and copied
 - Local AI through Ollama (qwen3.5:9b), optional Anthropic key
 
+## Shortcuts
+
+Press `?` in the app for the full list. Highlights: Cmd+Shift+B (planner snapshot, works from any app), Cmd+K (commands), Cmd+N (new email), Cmd+Z (undo done or delete), j/k/e/p/r/c/h/u in the inbox, t/n/d/w and arrows in the calendar.
+
+## Mail search
+
+`from:` `to:` `subject:` `label:` `is:unread|read|pinned|priority|done` `has:attachment|comment`, and a leading `-` excludes (for example `-label:work`).
+
 ## Build and run (macOS)
 
     ./package.sh

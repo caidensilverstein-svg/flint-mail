@@ -3468,6 +3468,13 @@ impl FlintApp {
 
     fn composer_window(&mut self, ctx: &egui::Context, pal: Pal) {
         let Some(mut c) = self.composer.take() else { return };
+        for f in ctx.input(|i| i.raw.dropped_files.clone()) {
+            if let Some(p) = f.path {
+                if !c.attachments.contains(&p) {
+                    c.attachments.push(p);
+                }
+            }
+        }
         let mut open = true;
         let mut send: Option<Option<DateTime<Local>>> = None;
         let mut ai_req: Option<(String, String, String)> = None;

@@ -1585,6 +1585,10 @@ impl FlintApp {
         }
         if esc {
             self.help_open = false;
+            self.snap_open = false;
+            if !ctx.wants_keyboard_input() {
+                self.settings_open = false;
+            }
         }
         if !ctx.wants_keyboard_input() && ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(Key::Z)) {
             if let Some((id, done, read, trashed)) = self.undo_mail.take() {

@@ -4981,7 +4981,15 @@ impl FlintApp {
                 } else {
                     (None, false)
                 };
+                if self.tasks.iter().any(|t| t.title.trim().eq_ignore_ascii_case(it.title.trim())) {
+                    continue;
+                }
                 batch.push((it.title.trim().to_string(), due, date_only));
+            }
+            if batch.is_empty() {
+                self.toast("Those tasks are already in your list");
+                self.capture = None;
+                return;
             }
             for (t, d, _) in &batch {
                 self.tasks.push(mac::Task { id: String::new(), list: "Reminders".into(), title: t.clone(), due: *d, flagged: false });

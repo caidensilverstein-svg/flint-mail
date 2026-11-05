@@ -1671,10 +1671,19 @@ impl FlintApp {
             self.help_open = !self.help_open;
         }
         if !ctx.wants_keyboard_input() && self.mode == Mode::Calendar && self.screenshot.is_none() {
-            let (t, left, right, m_key) = ctx.input(|i| {
+            let (t, left, right, m_key, n_key, d_key, w_key) = ctx.input(|i| {
                 let k = |key| i.key_pressed(key) && !i.modifiers.command;
-                (k(Key::T), k(Key::ArrowLeft), k(Key::ArrowRight), k(Key::M))
+                (k(Key::T), k(Key::ArrowLeft), k(Key::ArrowRight), k(Key::M), k(Key::N), k(Key::D), k(Key::W))
             });
+            if n_key {
+                self.event_form = Some(self.new_event_form(None));
+            }
+            if d_key {
+                self.cal_view = CalView::Day;
+            }
+            if w_key {
+                self.cal_view = CalView::Week;
+            }
             let step = match self.cal_view {
                 CalView::Day => 1,
                 CalView::ThreeDays => 3,
@@ -4397,6 +4406,7 @@ impl FlintApp {
             ("Double-click a time", "New calendar event"),
             ("t / arrows", "Calendar: today / previous or next period"),
             ("m", "Calendar: back to mail"),
+            ("n / d / w", "Calendar: new event / day view / week view"),
         ];
         egui::Window::new("Keyboard shortcuts").open(&mut open).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, egui::vec2(0.0, 0.0)).show(ctx, |ui| {
             egui::Grid::new("shortcut-grid").num_columns(2).spacing([24.0, 8.0]).show(ui, |ui| {

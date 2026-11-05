@@ -67,6 +67,21 @@ func work() {
         exit(0)
     }
 
+    if args.count >= 10 && args[1] == "updateevent" {
+        guard ask(.event), let t = Double(args[4]), let ns = Double(args[6]), let ne = Double(args[7]) else { exit(1) }
+        let start = Date(timeIntervalSince1970: t)
+        let pred = store.predicateForEvents(withStart: start.addingTimeInterval(-60), end: start.addingTimeInterval(60), calendars: nil)
+        if let e = store.events(matching: pred).first(where: { $0.title == args[3] && $0.calendar.title == args[2] && $0.calendar.allowsContentModifications && abs($0.startDate.timeIntervalSince(start)) < 1 }) {
+            e.title = args[5]
+            e.startDate = Date(timeIntervalSince1970: ns)
+            e.endDate = Date(timeIntervalSince1970: ne)
+            e.location = args[8]
+            e.url = args[9].isEmpty ? nil : URL(string: args[9])
+            try? store.save(e, span: .thisEvent, commit: true)
+        }
+        exit(0)
+    }
+
     var out: [String: Any] = ["names": [String](), "events": [Any](), "tasks": [Any](), "errors": [String]()]
     var errors: [String] = []
 

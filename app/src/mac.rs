@@ -432,6 +432,20 @@ pub fn add_event(calendar: &str, title: &str, start: chrono::DateTime<chrono::Lo
     run_helper(&["addevent".to_string(), calendar.to_string(), title.to_string(), start.timestamp().to_string(), end.timestamp().to_string(), location.to_string(), link.to_string()])
 }
 
+pub fn update_event(calendar: &str, old_title: &str, old_start: chrono::DateTime<chrono::Local>, title: &str, start: chrono::DateTime<chrono::Local>, end: chrono::DateTime<chrono::Local>, location: &str, link: &str) -> bool {
+    run_helper(&[
+        "updateevent".to_string(),
+        calendar.to_string(),
+        old_title.to_string(),
+        old_start.timestamp().to_string(),
+        title.to_string(),
+        start.timestamp().to_string(),
+        end.timestamp().to_string(),
+        location.to_string(),
+        link.to_string(),
+    ])
+}
+
 pub fn delete_event(calendar: &str, title: &str, start: chrono::DateTime<chrono::Local>) -> bool {
     run_helper(&["deleteevent".to_string(), calendar.to_string(), title.to_string(), start.timestamp().to_string()])
 }

@@ -184,6 +184,7 @@ struct EventForm {
     location: String,
     link: String,
     attendees: String,
+    editing: Option<u64>,
 }
 
 #[derive(Default)]
@@ -3181,6 +3182,7 @@ impl FlintApp {
             location: String::new(),
             link: String::new(),
             attendees: String::new(),
+            editing: None,
         }
     }
 
@@ -3386,6 +3388,20 @@ impl FlintApp {
             }
         });
         ui.add_space(8.0);
+        if ui.button("Edit").clicked() {
+            self.event_form = Some(EventForm {
+                title: e.title.clone(),
+                date: e.start.format("%Y-%m-%d").to_string(),
+                time: e.start.format("%H:%M").to_string(),
+                minutes: (e.end - e.start).num_minutes().max(1),
+                calendar: e.calendar,
+                location: e.location.clone(),
+                link: e.link.clone().unwrap_or_default(),
+                attendees: e.attendees.join(", "),
+                editing: Some(e.id),
+            });
+        }
+        ui.add_space(4.0);
         let confirming = self.confirm_delete == Some(e.id);
         let label = if confirming { "Click again to delete from your calendar" } else { "Delete event" };
         if ui.add(egui::Button::new(RichText::new(label).color(RED)).frame(false)).clicked() {
@@ -3628,7 +3644,7 @@ impl FlintApp {
         let mut open = true;
         let mut save = false;
         let mut find_time = false;
-        egui::Window::new("New Event").open(&mut open).collapsible(false).resizable(false).default_pos([420.0, 140.0]).show(ctx, |ui| {
+        egui::Window::new(if f.editing.is_some() { "Edit Event" } else { "New Event" }).open(&mut open).collapsible(false).resizable(false).default_pos([420.0, 140.0]).show(ctx, |ui| {
             egui::Grid::new("event-grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                 ui.label("Title");
                 ui.text_edit_singleline(&mut f.title);
@@ -3689,6 +3705,32 @@ impl FlintApp {
             match (date, h) {
                 (Ok(d), Some(h)) if h < 24 => {
                     let start = mech::at(d, h, m);
+                    if let Some(eid) = f.editing {
+                        if let Some(i) = self.events.iter().position(|e| e.id == eid) {
+                            let old = self.events[i].clone();
+                            let end = start + Duration::minutes(f.minutes);
+                            let title = if f.title.trim().is_empty() { "New event".to_string() } else { f.title.trim().to_string() };
+                            let link = f.link.trim().to_string();
+                            if mac::has_helper() && self.screenshot.is_none() {
+                                let cal = self.calendars.get(old.calendar).map(|c| c.name.clone()).unwrap_or_default();
+                                let (ot, os, nt, loc, lk) = (old.title.clone(), old.start, title.clone(), f.location.clone(), link.clone());
+                                std::thread::spawn(move || {
+                                    mac::update_event(&cal, &ot, os, &nt, start, end, &loc, &lk);
+                                });
+                            }
+                            let ev = &mut self.events[i];
+                            ev.title = title;
+                            ev.start = start;
+                            ev.end = end;
+                            ev.location = f.location.clone();
+                            ev.link = (!link.is_empty()).then(|| link);
+                            ev.attendees = f.attendees.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                            ev.notified = start < Local::now();
+                            self.cal_anchor = d;
+                            self.toast("Event updated");
+                            return;
+                        }
+                    }
                     let id = self.id();
                     self.events.push(Event {
                         id,

@@ -3164,6 +3164,7 @@ impl FlintApp {
             let sp = ui.painter_at(srect);
             sp.text(egui::pos2(srect.left() + gutter - 8.0, srect.top() + 14.0), Align2::RIGHT_CENTER, "all-day", FontId::proportional(10.0), pal.sub);
             let mut shits: Vec<(egui::Rect, u64)> = Vec::new();
+            let mut thits: Vec<(egui::Rect, String, NaiveDate)> = Vec::new();
             for i in 0..days {
                 let d = start + Duration::days(i);
                 let x = srect.left() + gutter + col_w * i as f32;
@@ -3194,6 +3195,7 @@ impl FlintApp {
                     sp.circle_stroke(egui::pos2(er.left() + 9.0, er.center().y), 4.0, Stroke::new(1.3_f32, GREEN));
                     let g = one_line(ui, &label, 11.0, pal.text, er.width() - 24.0);
                     sp.galley(egui::pos2(er.left() + 18.0, er.top() + 2.0), g, pal.text);
+                    thits.push((er, title.clone(), d));
                 }
             }
             sp.line_segment([egui::pos2(srect.left() + gutter, srect.bottom()), egui::pos2(srect.right(), srect.bottom())], Stroke::new(1.0_f32, pal.border));
@@ -3201,6 +3203,13 @@ impl FlintApp {
                 if let Some(pos) = sresp.interact_pointer_pos() {
                     if let Some((_, id)) = shits.iter().find(|(r, _)| r.contains(pos)) {
                         clicked_event = Some(*id);
+                    } else if let Some((_, title, d)) = thits.iter().find(|(r, _, _)| r.contains(pos)) {
+                        if let Some(i) = self.tasks.iter().position(|t| t.title == *title && t.due.map(|x| x.date_naive()) == Some(*d)) {
+                            let t = self.tasks.remove(i);
+                            let id = t.id;
+                            std::thread::spawn(move || mac::complete_reminder(&id));
+                            self.toast(format!("Done: {}", t.title));
+                        }
                     }
                 }
             }

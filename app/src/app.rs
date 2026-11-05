@@ -604,19 +604,36 @@ impl FlintApp {
             return true;
         }
         q.split_whitespace().all(|tok| {
-            if let Some(v) = tok.strip_prefix("from:") {
+            let (neg, tok) = match tok.strip_prefix('-') {
+                Some(rest) if rest.contains(':') || rest.len() > 1 => (true, rest),
+                _ => (false, tok),
+            };
+            let hit = if let Some(v) = tok.strip_prefix("from:") {
                 m.from_name.to_lowercase().contains(v) || m.from_addr.to_lowercase().contains(v)
+            } else if let Some(v) = tok.strip_prefix("to:") {
+                m.to.to_lowercase().contains(v)
+            } else if let Some(v) = tok.strip_prefix("subject:") {
+                m.subject.to_lowercase().contains(v)
             } else if let Some(v) = tok.strip_prefix("label:") {
                 m.labels.iter().any(|l| l.to_lowercase() == v)
             } else if tok == "is:unread" {
                 !m.read
+            } else if tok == "is:read" {
+                m.read
             } else if tok == "is:pinned" {
                 m.pinned
+            } else if tok == "is:priority" {
+                m.priority
+            } else if tok == "is:done" {
+                m.done
             } else if tok == "has:attachment" {
                 !m.attachments.is_empty()
+            } else if tok == "has:comment" {
+                !m.comments.is_empty()
             } else {
                 format!("{} {} {} {}", m.from_name, m.from_addr, m.subject, m.body).to_lowercase().contains(tok)
-            }
+            };
+            hit != neg
         })
     }
 
@@ -2055,7 +2072,7 @@ impl FlintApp {
             let search = ui.add(
                 egui::TextEdit::singleline(&mut self.search)
                     .id(egui::Id::new("search"))
-                    .hint_text("Search mail   (try from: or is:unread)")
+                    .hint_text("Search mail   (from: to: subject: is:unread -label:work)")
                     .desired_width(330.0),
             );
             if search.changed() && self.mode == Mode::Calendar {
@@ -2128,7 +2145,7 @@ impl FlintApp {
                         if list.is_empty() {
                             ui.add_space(70.0);
                             let (title, hint) = if !self.search.is_empty() {
-                                ("No matches", "Try fewer words, or a filter like from: or is:unread.")
+                                ("No matches", "Try fewer words, or a filter like from:maya subject:launch is:unread.")
                             } else if self.unread_only {
                                 ("All read", "Nothing unread in this folder.")
                             } else {
@@ -4199,7 +4216,7 @@ impl FlintApp {
             return;
         }
         let mut open = true;
-        let rows: [(&str, &str); 18] = [
+        let rows: [(&str, &str); 19] = [
             ("Cmd+Shift+B", "Snapshot your planner (works from any app)"),
             ("Cmd+K", "Command bar"),
             ("j / k", "Next / previous email"),
@@ -4212,6 +4229,7 @@ impl FlintApp {
             ("Delete", "Move to trash"),
             ("Cmd+Z", "Undo the last done or delete"),
             ("/", "Search"),
+            ("Search filters", "from: to: subject: label: is:unread/read/pinned/priority/done has:attachment/comment, - to exclude"),
             ("?", "This list"),
             ("Cmd+Enter", "Send the email you are writing"),
             ("Esc", "Close dialogs"),

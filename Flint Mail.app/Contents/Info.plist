@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>Flint Mail</string>
+<key>CFBundleDisplayName</key><string>Flint Mail</string>
+<key>CFBundleIdentifier</key><string>local.flintmail.app</string>
+<key>CFBundleExecutable</key><string>flint-mail</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>0.1.0</string>
+<key>CFBundleShortVersionString</key><string>0.1.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSCalendarsFullAccessUsageDescription</key><string>Flint Mail shows your calendar events.</string>
+<key>NSRemindersFullAccessUsageDescription</key><string>Flint Mail shows your reminders as tasks.</string>
+<key>NSCalendarsUsageDescription</key><string>Flint Mail shows your calendar events.</string>
+<key>NSRemindersUsageDescription</key><string>Flint Mail can send emails to Reminders.</string>
+<key>NSAppleEventsUsageDescription</key><string>Flint Mail reads your Calendar events and sends items to Reminders and Notes.</string>
+</dict></plist>

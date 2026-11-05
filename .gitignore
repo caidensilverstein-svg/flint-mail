@@ -1,0 +1,7 @@
+app/target/
+helper/flint-cal
+*.png
+.DS_Store
+CLAUDE.local.md
+check.log
+rustup.log

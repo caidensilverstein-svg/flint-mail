@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.silverstein.flintmail.cal</string>
+<key>CFBundleName</key><string>flint-cal</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>Flint Mail shows your calendar events in its planner.</string>
+<key>NSCalendarsUsageDescription</key><string>Flint Mail shows your calendar events in its planner.</string>
+<key>NSRemindersFullAccessUsageDescription</key><string>Flint Mail shows your reminders as tasks in its planner.</string>
+<key>NSRemindersUsageDescription</key><string>Flint Mail shows your reminders as tasks in its planner.</string>
+</dict></plist>

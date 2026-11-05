@@ -244,7 +244,8 @@ fn decode_entities(s: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         let tail = &rest[i..];
-        if let Some(end) = tail[..tail.len().min(12)].find(';') {
+        let window = tail.char_indices().nth(12).map(|(i, _)| i).unwrap_or(tail.len());
+        if let Some(end) = tail[..window].find(';') {
             let ent = &tail[1..end];
             let rep: Option<String> = match ent {
                 "nbsp" => Some(" ".into()),
@@ -357,5 +358,17 @@ mod live_tests {
         let m = cache.mails.iter().find(|m| m.read).expect("a read message");
         let pw = crate::mac::keychain_get(&acc.email).expect("password in keychain");
         mark_seen(&acc, &pw, m.uid).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod entity_tests {
+    use super::*;
+
+    #[test]
+    fn decode_entities_survives_multibyte_text() {
+        assert_eq!(decode_entities("AT&T caf\u{e9} &amp; \u{fc}n\u{ef}c\u{f6}d\u{e9}&nbsp;x"), "AT&T caf\u{e9} & \u{fc}n\u{ef}c\u{f6}d\u{e9} x");
+        assert_eq!(decode_entities("&\u{1f600}\u{1f600}\u{1f600}\u{1f600} ok"), "&\u{1f600}\u{1f600}\u{1f600}\u{1f600} ok");
+        assert_eq!(decode_entities("a &#8217; b &#x41;"), "a \u{2019} b A");
     }
 }

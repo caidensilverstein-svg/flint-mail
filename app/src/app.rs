@@ -3542,6 +3542,12 @@ impl FlintApp {
         let now = Local::now();
         let accounts = self.accounts();
         let slots = self.free_slots(now, 3);
+        let mut contacts: Vec<(String, String)> = Vec::new();
+        for m in self.mails.iter().filter(|m| !data::SAMPLE_ACCOUNTS.contains(&m.account.as_str())) {
+            if !m.from_addr.is_empty() && !contacts.iter().any(|(_, a)| *a == m.from_addr) {
+                contacts.push((m.from_name.clone(), m.from_addr.clone()));
+            }
+        }
         egui::Window::new(if c.reply_to.is_some() { "Reply" } else { "New Email" })
             .open(&mut open)
             .default_size([660.0, 560.0])
@@ -3562,6 +3568,26 @@ impl FlintApp {
                     ui.label(RichText::new("To").color(pal.sub));
                     ui.add(egui::TextEdit::singleline(&mut c.to).desired_width(f32::INFINITY).hint_text("name@example.com, ..."));
                     ui.end_row();
+                    let typed = c.to.rsplit(',').next().unwrap_or("").trim().to_lowercase();
+                    if typed.chars().count() >= 2 && !typed.contains('@') {
+                        let picks: Vec<&(String, String)> = contacts
+                            .iter()
+                            .filter(|(n, a)| n.to_lowercase().contains(&typed) || a.to_lowercase().contains(&typed))
+                            .take(4)
+                            .collect();
+                        if !picks.is_empty() {
+                            ui.label("");
+                            ui.horizontal_wrapped(|ui| {
+                                for (name, addr) in picks {
+                                    if ui.small_button(format!("{}  <{}>", name, addr)).clicked() {
+                                        let head: Vec<&str> = c.to.rsplitn(2, ',').collect();
+                                        c.to = if head.len() == 2 { format!("{}, {}", head[1].trim(), addr) } else { addr.clone() };
+                                    }
+                                }
+                            });
+                            ui.end_row();
+                        }
+                    }
                     ui.label(RichText::new("Subject").color(pal.sub));
                     ui.add(egui::TextEdit::singleline(&mut c.subject).desired_width(f32::INFINITY));
                     ui.end_row();

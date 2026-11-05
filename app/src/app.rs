@@ -1227,6 +1227,7 @@ impl FlintApp {
                     }
                     TrayAction::NewEmail => self.composer = Some(self.fresh_composer()),
                     TrayAction::Calendar => self.mode = Mode::Calendar,
+                    TrayAction::Snapshot => self.start_snapshot(ctx),
                     TrayAction::AskAi => {
                         self.mode = Mode::Mail;
                         self.copilot_open = true;

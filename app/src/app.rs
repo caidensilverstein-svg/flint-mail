@@ -152,6 +152,7 @@ struct Composer {
     show_ai: bool,
     previous_body: Option<String>,
     attachments: Vec<PathBuf>,
+    focus_top: bool,
 }
 
 impl Composer {
@@ -171,6 +172,7 @@ impl Composer {
             show_ai: true,
             previous_body: None,
             attachments: Vec::new(),
+            focus_top: false,
         }
     }
 }
@@ -446,6 +448,10 @@ impl FlintApp {
         }
         if shot_mode && std::env::var_os("FLINT_EVENT_FORM").is_some() {
             app.event_form = Some(app.new_event_form(None));
+        }
+        if shot_mode && std::env::var_os("FLINT_REPLY").is_some() {
+            let id = app.mails.first().map(|m| m.id).unwrap_or(1);
+            app.apply(vec![Act::Reply(id, true)], &cc.egui_ctx);
         }
         if shot_mode && std::env::var_os("FLINT_COMPOSE").is_some() {
             app.composer = Some(Composer::blank());
@@ -1386,6 +1392,7 @@ impl FlintApp {
                         c.to_name = m.from_name.clone();
                         c.subject = if m.subject.starts_with("Re:") { m.subject.clone() } else { format!("Re: {}", m.subject) };
                         c.reply_to = Some(id);
+                        c.focus_top = true;
                         let quoted: String = m.body.lines().take(40).map(|l| format!("> {}", l)).collect::<Vec<_>>().join("\n");
                         c.body = format!("\n\n{}\n\nOn {}, {} <{}> wrote:\n{}", self.settings.signature, m.received.format("%a, %b %-d at %-I:%M %p"), m.from_name, m.from_addr, quoted);
                         self.composer = Some(c);
@@ -3626,7 +3633,15 @@ impl FlintApp {
                 c.attachments.remove(i);
             }
         }
-        ui.add_sized([ui.available_width(), body_h], egui::TextEdit::multiline(&mut c.body).hint_text("Write your message..."));
+        let body_id = egui::Id::new("composer-body");
+        if c.focus_top {
+            c.focus_top = false;
+            let mut st = egui::text_edit::TextEditState::load(ui.ctx(), body_id).unwrap_or_default();
+            st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(0))));
+            st.store(ui.ctx(), body_id);
+            ui.ctx().memory_mut(|m| m.request_focus(body_id));
+        }
+        ui.add_sized([ui.available_width(), body_h], egui::TextEdit::multiline(&mut c.body).id(body_id).hint_text("Write your message..."));
                 });
                 ui.horizontal(|ui| {
                     let cmd_enter = ui.input(|i| i.modifiers.command && i.key_pressed(Key::Enter));

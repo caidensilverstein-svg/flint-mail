@@ -3608,6 +3608,9 @@ impl FlintApp {
         });
         ui.label(RichText::new(format!("{}  -  {}", e.start.format("%a, %b %-d  %-I:%M %p"), e.end.format("%-I:%M %p"))).color(pal.sub));
         ui.label(RichText::new(format!("{}  |  {}", self.calendars.get(e.calendar).map(|c| c.name.as_str()).unwrap_or(""), mech::countdown(e.start, now))).size(12.0).color(pal.sub));
+        if e.recurs {
+            ui.label(RichText::new("Repeats. Edit or delete applies to this event or all future ones.").size(12.0).color(ACCENT));
+        }
         if !e.location.is_empty() {
             ui.label(RichText::new(format!("Location: {}", e.location)).color(pal.text));
         }

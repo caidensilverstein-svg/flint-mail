@@ -227,6 +227,7 @@ enum Act {
     Reply(u64, bool),
     QuickReply(u64, &'static str),
     Forward(u64),
+    Brief,
     Summarize(u64),
     MarkSectionRead(Section),
     DoneSection(Section),
@@ -1427,6 +1428,7 @@ impl FlintApp {
                         self.run_ai(ctx, "You write concise, natural email replies.", prompt, fallback, Target::Composer);
                     }
                 }
+                Act::Brief => self.brief_me(ctx),
                 Act::Forward(id) => {
                     if let Some(m) = self.mail(id).cloned() {
                         let mut c = Composer::blank();
@@ -2329,7 +2331,7 @@ impl FlintApp {
         let todays_events: Vec<&Event> = self.events.iter().filter(|e| e.start.date_naive() == today && e.end > now).collect();
         let due_tasks = self.tasks.iter().filter(|t| t.due.map(|d| d.date_naive() <= today).unwrap_or(false)).count();
         let unread = self.mails.iter().filter(|m| !m.read && !m.trashed && !m.done).count();
-        if self.screenshot.is_none() && (!todays_events.is_empty() || due_tasks > 0) {
+        if self.screenshot.is_none() && (!todays_events.is_empty() || due_tasks > 0 || unread > 0) {
             let greeting = match now.hour() {
                 0..=4 => "Late night",
                 5..=11 => "Good morning",
@@ -2343,7 +2345,14 @@ impl FlintApp {
                 .outer_margin(egui::Margin::symmetric(10.0, 4.0))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new(greeting).strong().color(pal.text));
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(greeting).strong().color(pal.text));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.small_button("Brief me").clicked() {
+                                acts.push(Act::Brief);
+                            }
+                        });
+                    });
                     let mut parts = vec![format!("{} unread", unread)];
                     if !todays_events.is_empty() {
                         parts.push(format!("{} event{} left today", todays_events.len(), if todays_events.len() == 1 { "" } else { "s" }));

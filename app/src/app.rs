@@ -556,6 +556,18 @@ impl FlintApp {
         }
         if shot_mode && std::env::var_os("FLINT_EVENT_FORM").is_some() {
             app.event_form = Some(app.new_event_form(None));
+            if let Some(f) = app.event_form.as_mut() {
+                f.repeat = 7;
+                f.rep_end = 2;
+            }
+        }
+        if shot_mode && std::env::var_os("FLINT_CAPTURE").is_some() {
+            let items = [("Review launch plan", "2026-11-06 14:00"), ("Book dentist follow-up", "2026-11-08"), ("Read the onboarding doc", "")];
+            let tex = image::open("/tmp/flint-sample.png").ok().map(|img| {
+                let img = img.thumbnail(900, 900).to_rgba8();
+                cc.egui_ctx.load_texture("capture", egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw()), egui::TextureOptions::LINEAR)
+            });
+            app.capture = Some(Capture { path: PathBuf::new(), tex, reading: false, error: String::new(), items: items.iter().map(|(t, d)| CapItem { on: true, title: t.to_string(), due: d.to_string() }).collect() });
         }
         if shot_mode && std::env::var_os("FLINT_REPLY").is_some() {
             let id = app.mails.first().map(|m| m.id).unwrap_or(1);

@@ -1922,8 +1922,14 @@ fn mail_row(ui: &mut Ui, m: &Mail, selected: bool, pal: Pal, now: DateTime<Local
         painter.circle_filled(egui::pos2(mx + 4.0, my), 4.0, GREEN);
     }
     let subj_color = if m.read { pal.sub } else { pal.text };
-    let subj = one_line(ui, &m.subject, 12.5, subj_color, rect.right() - x - 18.0);
+    let has_files = !m.attachments.is_empty();
+    let subj = one_line(ui, &m.subject, 12.5, subj_color, rect.right() - x - 18.0 - if has_files { 74.0 } else { 0.0 });
     painter.galley(egui::pos2(x, rect.top() + 26.0), subj, subj_color);
+    if has_files {
+        let tag = one_line(ui, "Attachment", 10.5, pal.sub, 70.0);
+        let tw = tag.size().x;
+        painter.galley(egui::pos2(rect.right() - 16.0 - tw, rect.top() + 28.0), tag, pal.sub);
+    }
     let mut snippet = m.snippet();
     if let Some(t) = m.snoozed_until {
         snippet = format!("Snoozed until {}  -  {}", mech::short_when(t, now), snippet);

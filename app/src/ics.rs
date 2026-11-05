@@ -34,7 +34,7 @@ fn parse_stamp(params: &str, value: &str) -> Option<Stamp> {
     let v = value.trim();
     let all_day = params.contains("VALUE=DATE") && !params.contains("DATE-TIME") || v.len() == 8;
     if all_day {
-        let d = NaiveDate::parse_from_str(&v[..8], "%Y%m%d").ok()?;
+        let d = NaiveDate::parse_from_str(v.get(..8)?, "%Y%m%d").ok()?;
         return Some(Stamp { naive: d.and_hms_opt(0, 0, 0)?, zone: Zone::Local, all_day: true });
     }
     let utc = v.ends_with('Z');

@@ -167,7 +167,7 @@ fn parse_message(acc: &Account, uid: u32, raw: &[u8], read: bool) -> Option<Remo
 }
 
 fn split_address(s: &str) -> (String, String) {
-    if let (Some(a), Some(b)) = (s.find('<'), s.rfind('>')) {
+    if let Some((a, b)) = s.find('<').zip(s.rfind('>')).filter(|(a, b)| b > a) {
         let name = s[..a].trim().trim_matches('"').to_string();
         let addr = s[a + 1..b].trim().to_string();
         (if name.is_empty() { addr.clone() } else { name }, addr)
@@ -212,7 +212,7 @@ fn strip_html(s: &str) -> String {
     let mut text = s.to_string();
     for tag in ["style", "script", "head"] {
         loop {
-            let lower = text.to_lowercase();
+            let lower = text.to_ascii_lowercase();
             let Some(start) = lower.find(&format!("<{}", tag)) else { break };
             let end = lower[start..].find(&format!("</{}>", tag)).map(|e| start + e + tag.len() + 3).unwrap_or(text.len());
             text.replace_range(start..end.min(text.len()), " ");
@@ -370,5 +370,24 @@ mod entity_tests {
         assert_eq!(decode_entities("AT&T caf\u{e9} &amp; \u{fc}n\u{ef}c\u{f6}d\u{e9}&nbsp;x"), "AT&T caf\u{e9} & \u{fc}n\u{ef}c\u{f6}d\u{e9} x");
         assert_eq!(decode_entities("&\u{1f600}\u{1f600}\u{1f600}\u{1f600} ok"), "&\u{1f600}\u{1f600}\u{1f600}\u{1f600} ok");
         assert_eq!(decode_entities("a &#8217; b &#x41;"), "a \u{2019} b A");
+    }
+}
+
+#[cfg(test)]
+mod robustness_tests {
+    use super::*;
+
+    #[test]
+    fn split_address_handles_odd_headers() {
+        assert_eq!(split_address("Maya Chen <maya@x.com>"), ("Maya Chen".to_string(), "maya@x.com".to_string()));
+        let _ = split_address("x> <y");
+        let _ = split_address("<");
+        let _ = split_address(">");
+    }
+
+    #[test]
+    fn strip_html_handles_unicode_case_changes() {
+        let t = strip_html("<STYLE>p{}</STYLE>\u{130}stanbul <b>caf\u{e9}</b><!-- c --> ok");
+        assert!(t.contains("stanbul") && t.contains("caf\u{e9}") && t.contains("ok"));
     }
 }

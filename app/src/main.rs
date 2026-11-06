@@ -5,7 +5,6 @@ mod ics;
 mod mac;
 mod mechanics;
 mod net;
-#[cfg(target_os = "macos")]
 mod snap;
 mod theme;
 #[cfg(target_os = "macos")]

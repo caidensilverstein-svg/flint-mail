@@ -1,23 +1,33 @@
 // Global Cmd+Shift+B hotkey and planner snapshot helpers.
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_os = "macos")]
 use std::sync::Arc;
 
 use chrono::Local;
 use eframe::egui;
 
+#[cfg(target_os = "macos")]
 pub struct Hotkey {
     _manager: global_hotkey::GlobalHotKeyManager,
     pub fired: Arc<AtomicBool>,
     pub shot: Arc<std::sync::Mutex<Option<Result<PathBuf, String>>>>,
 }
 
+#[cfg(target_os = "macos")]
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
     fn CGRequestScreenCaptureAccess() -> bool;
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn capture_screen() -> Result<PathBuf, String> {
+    Err("Screen capture is only available on macOS".into())
+}
+
+#[cfg(target_os = "macos")]
 pub fn capture_screen() -> Result<PathBuf, String> {
     if !unsafe { CGPreflightScreenCaptureAccess() } {
         unsafe { CGRequestScreenCaptureAccess() };
@@ -57,6 +67,7 @@ fn base64(data: &[u8]) -> String {
     out
 }
 
+#[cfg(target_os = "macos")]
 pub fn register(ctx: &egui::Context) -> Result<Hotkey, String> {
     use global_hotkey::hotkey::{Code, HotKey, Modifiers};
     use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};

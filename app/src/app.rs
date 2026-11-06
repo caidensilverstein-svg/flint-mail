@@ -5310,7 +5310,7 @@ mod repeat_tests {
         let mut f = form(2);
         f.rep_end = 2;
         f.rep_count = 7;
-        let start = mech::at(Local::now().date_naive() + Duration::days(1), 9, 0);
+        let start = mech::at(NaiveDate::from_ymd_opt(2026, 11, 2).unwrap(), 9, 0);
         let occ = f.occurrences(start);
         assert_eq!(occ.len(), 7);
         assert!(occ.iter().all(|d| d.weekday().number_from_monday() <= 5));

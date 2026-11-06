@@ -1,6 +1,7 @@
 mod ai;
 mod app;
 mod data;
+mod groq;
 mod ics;
 mod mac;
 mod mechanics;

@@ -21,6 +21,7 @@ pub enum Target {
     Copilot,
     EventNotes(u64),
     Labels,
+    Insight(u64),
 }
 
 pub struct AiResult {
@@ -28,36 +29,117 @@ pub struct AiResult {
     pub text: String,
     pub used_model: bool,
     pub error: Option<String>,
+    pub partial: bool,
 }
 
-pub fn spawn(
-    key: Option<String>,
-    model: String,
-    system: String,
-    prompt: String,
-    fallback: String,
-    target: Target,
-    tx: Sender<AiResult>,
-    ctx: eframe::egui::Context,
-) {
-    let key = key.filter(|k| !k.trim().is_empty());
-    if key.is_none() && !local_model_ready() {
-        let _ = tx.send(AiResult { target, text: fallback, used_model: false, error: None });
-        ctx.request_repaint();
+#[derive(Clone, Default)]
+pub struct Engine {
+    pub groq_key: Option<String>,
+    pub groq_model: String,
+    pub groq_fast_model: String,
+    pub claude_key: Option<String>,
+    pub claude_model: String,
+}
+
+impl Engine {
+    pub fn label(&self) -> &'static str {
+        let has = |k: &Option<String>| k.as_deref().map_or(false, |k| !k.trim().is_empty());
+        if has(&self.groq_key) {
+            "Groq"
+        } else if has(&self.claude_key) {
+            "Claude"
+        } else {
+            "On this Mac"
+        }
+    }
+
+    pub fn is_cloud(&self) -> bool {
+        self.label() != "On this Mac"
+    }
+}
+
+fn send(tx: &Sender<AiResult>, ctx: &eframe::egui::Context, target: &Target, text: String, used_model: bool, error: Option<String>, partial: bool) {
+    let _ = tx.send(AiResult { target: target.clone(), text, used_model, error, partial });
+    ctx.request_repaint();
+}
+
+pub fn spawn(engine: Engine, system: String, prompt: String, fallback: String, target: Target, tx: Sender<AiResult>, ctx: eframe::egui::Context) {
+    let groq = engine.groq_key.clone().filter(|k| !k.trim().is_empty());
+    let claude = engine.claude_key.clone().filter(|k| !k.trim().is_empty());
+    if groq.is_none() && claude.is_none() && !local_model_ready() {
+        send(&tx, &ctx, &target, fallback, false, None, false);
         return;
     }
+    let streaming = matches!(target, Target::Summary(_) | Target::Composer | Target::Copilot);
+    let json = matches!(target, Target::Insight(_));
     std::thread::spawn(move || {
-        let out = match &key {
-            Some(k) => call_claude(k, &model, &system, &prompt),
-            None => call_local(&system, &prompt),
+        let mut err = None;
+        if let Some(k) = &groq {
+            let model = if json || matches!(target, Target::Summary(_)) { &engine.groq_fast_model } else { &engine.groq_model };
+            let model = if model.trim().is_empty() { crate::groq::DEFAULT_MODEL } else { model.as_str() };
+            if streaming {
+                let mut last = std::time::Instant::now() - Duration::from_secs(1);
+                let r = crate::groq::stream(k, model, &system, &prompt, AI_MAX_TOKENS, |t| {
+                    if last.elapsed() >= Duration::from_millis(40) {
+                        last = std::time::Instant::now();
+                        send(&tx, &ctx, &target, t.to_string(), true, None, true);
+                    }
+                });
+                match r {
+                    Ok(text) => return send(&tx, &ctx, &target, text, true, None, false),
+                    Err((_, partial)) if !partial.trim().is_empty() => return send(&tx, &ctx, &target, partial, true, None, false),
+                    Err((e, _)) => err = Some(e),
+                }
+            } else {
+                match crate::groq::chat(k, model, &system, &prompt, AI_MAX_TOKENS, json) {
+                    Ok(text) => return send(&tx, &ctx, &target, text, true, None, false),
+                    Err(e) => err = Some(e),
+                }
+            }
+        }
+        let out = match &claude {
+            Some(k) => call_claude(k, &engine.claude_model, &system, &prompt),
+            None if local_model_ready() => call_local(&system, &prompt),
+            None => Err(err.clone().unwrap_or_else(|| "No AI available".into())),
         };
-        let res = match out {
-            Ok(text) => AiResult { target, text, used_model: true, error: None },
-            Err(e) => AiResult { target, text: fallback, used_model: false, error: Some(e) },
-        };
-        let _ = tx.send(res);
-        ctx.request_repaint();
+        match out {
+            Ok(text) => send(&tx, &ctx, &target, text, true, None, false),
+            Err(e) => send(&tx, &ctx, &target, fallback, false, Some(err.unwrap_or(e)), false),
+        }
     });
+}
+
+// Pulls the first JSON object out of a model answer: strips code fences and trailing commas.
+pub fn extract_json(text: &str) -> Option<serde_json::Value> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end < start {
+        return None;
+    }
+    let raw = &text[start..=end];
+    if let Ok(v) = serde_json::from_str(raw) {
+        return Some(v);
+    }
+    let mut cleaned = String::with_capacity(raw.len());
+    let chars: Vec<char> = raw.chars().collect();
+    let mut in_str = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' && (i == 0 || chars[i - 1] != '\\') {
+            in_str = !in_str;
+        }
+        if !in_str && c == ',' {
+            let next = chars[i + 1..].iter().find(|c| !c.is_whitespace());
+            if matches!(next, Some('}') | Some(']')) {
+                i += 1;
+                continue;
+            }
+        }
+        cleaned.push(c);
+        i += 1;
+    }
+    serde_json::from_str(&cleaned).ok()
 }
 
 const LOCAL_MODEL: &str = "qwen3.5:9b";
@@ -408,5 +490,19 @@ mod capture_tests {
         assert_eq!(t[0].due.as_deref(), Some("2026-11-06"));
         assert!(t[1].due.is_none());
         assert!(parse_tasks("no json here").is_err());
+    }
+}
+
+#[cfg(test)]
+mod json_tests {
+    use super::extract_json;
+
+    #[test]
+    fn reads_fenced_json_and_trailing_commas() {
+        let v = extract_json("Sure!\n```json\n{\"a\": 1, \"b\": [1,2,],}\n```").unwrap();
+        assert_eq!(v["a"], 1);
+        assert_eq!(v["b"][1], 2);
+        assert!(extract_json("no json here").is_none());
+        assert_eq!(extract_json("{\"s\": \"a, }\"}").unwrap()["s"], "a, }");
     }
 }

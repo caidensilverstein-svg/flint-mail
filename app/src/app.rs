@@ -11,6 +11,7 @@ use eframe::egui::{
 };
 
 use crate::ai::{self, AiResult, Target, Tone};
+use crate::groq;
 use crate::ics;
 use crate::data::{self, Account, CalendarInfo, Category, Comment, Event, Mail, Scheduled, SentMail, Settings};
 use crate::mac::{self, Integration};
@@ -153,6 +154,7 @@ struct Composer {
     previous_body: Option<String>,
     attachments: Vec<PathBuf>,
     focus_top: bool,
+    streaming: bool,
 }
 
 impl Composer {
@@ -173,6 +175,7 @@ impl Composer {
             previous_body: None,
             attachments: Vec::new(),
             focus_top: false,
+            streaming: false,
         }
     }
 }
@@ -354,6 +357,10 @@ pub struct FlintApp {
     settings: Settings,
     ai_key: String,
     ai_key_saved: bool,
+    groq_key: String,
+    groq_key_saved: bool,
+    groq_test: String,
+    copilot_stream_open: bool,
 
     mode: Mode,
     folder: Folder,
@@ -468,6 +475,11 @@ impl FlintApp {
         } else {
             std::env::var("ANTHROPIC_API_KEY").ok().or_else(|| mac::keychain_get("ai-key")).unwrap_or_default()
         };
+        let groq_key = if shot_mode {
+            String::new()
+        } else {
+            std::env::var("GROQ_API_KEY").ok().or_else(|| mac::keychain_get("groq-key")).unwrap_or_default()
+        };
         let saved_cal_view = settings.cal_view.clone();
         let migrated_now = migrated_now;
         let mut app = FlintApp {
@@ -479,6 +491,10 @@ impl FlintApp {
             settings,
             ai_key_saved: !ai_key.is_empty(),
             ai_key,
+            groq_key_saved: !groq_key.is_empty(),
+            groq_key,
+            groq_test: String::new(),
+            copilot_stream_open: false,
             mode: Mode::Mail,
             folder: Folder::SmartInbox,
             selected: Some(1),
@@ -1029,23 +1045,26 @@ impl FlintApp {
     }
 
     fn run_ai(&mut self, ctx: &egui::Context, system: &str, prompt: String, fallback: String, target: Target) {
-        let key = (!self.ai_key.trim().is_empty()).then(|| self.ai_key.clone());
-        ai::spawn(
-            key,
-            self.settings.ai_model.clone(),
-            system.to_string(),
-            prompt,
-            fallback,
-            target,
-            self.ai_tx.clone(),
-            ctx.clone(),
-        );
+        ai::spawn(self.engine(), system.to_string(), prompt, fallback, target, self.ai_tx.clone(), ctx.clone());
+    }
+
+    fn engine(&self) -> ai::Engine {
+        let some = |k: &String| (!k.trim().is_empty()).then(|| k.trim().to_string());
+        ai::Engine {
+            groq_key: some(&self.groq_key),
+            groq_model: self.settings.groq_model.clone(),
+            groq_fast_model: self.settings.groq_fast_model.clone(),
+            claude_key: some(&self.ai_key),
+            claude_model: self.settings.ai_model.clone(),
+        }
     }
 
     fn poll_background(&mut self) {
         while let Ok(r) = self.ai_rx.try_recv() {
             if let Some(e) = &r.error {
-                self.toast(format!("{} - used the on-device version instead", e));
+                if !matches!(r.target, Target::Insight(_)) {
+                    self.toast(format!("{} - used the on-device version instead", e));
+                }
             }
             match r.target {
                 Target::Summary(id) => {
@@ -1055,16 +1074,28 @@ impl FlintApp {
                 }
                 Target::Composer => {
                     if let Some(c) = self.composer.as_mut() {
-                        c.previous_body = Some(c.body.clone());
+                        if !c.streaming {
+                            c.previous_body = Some(c.body.clone());
+                        }
                         c.body = r.text;
-                        c.ai_busy = false;
-                        c.ai_note = if r.used_model { "Written with AI".into() } else { "Written on this Mac (add an AI key for better results)".into() };
+                        c.streaming = r.partial;
+                        if !r.partial {
+                            c.ai_busy = false;
+                            c.ai_note = if r.used_model { "Written with AI".into() } else { "Written on this Mac (add an AI key for better results)".into() };
+                        }
                     }
                 }
                 Target::Copilot => {
-                    self.copilot_log.push((false, r.text));
-                    self.copilot_busy = false;
+                    match self.copilot_log.last_mut() {
+                        Some(last) if self.copilot_stream_open => last.1 = r.text,
+                        _ => self.copilot_log.push((false, r.text)),
+                    }
+                    self.copilot_stream_open = r.partial;
+                    if !r.partial {
+                        self.copilot_busy = false;
+                    }
                 }
+                Target::Insight(_) => {}
                 Target::EventNotes(id) => {
                     if let Some(e) = self.events.iter_mut().find(|e| e.id == id) {
                         e.notes = format!("{}\n\nSummary:\n{}", e.notes.trim(), r.text);
@@ -4526,6 +4557,38 @@ impl FlintApp {
                 SettingsTab::Ai => {
                     ui.label(RichText::new("Where AI runs").strong());
                     ui.label(RichText::new("By default Flint uses the local model qwen3.5:9b through Ollama on this Mac. It is free and nothing leaves your Mac. If Ollama isn't running, Flint falls back to simple on-device versions.").size(12.0).color(pal.sub));
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Groq API key (fastest)").strong());
+                    ui.label(RichText::new("Groq streams answers as they are written and powers the background email analysis. Email text is sent to Groq when a key is set. The key is kept in your Mac's Keychain, never in a file.").size(12.0).color(pal.sub));
+                    ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(&mut self.groq_key).password(true).desired_width(320.0).hint_text("gsk_..."));
+                        if ui.button("Save key").clicked() {
+                            if self.groq_key.trim().is_empty() {
+                                mac::keychain_delete("groq-key");
+                                self.groq_key_saved = false;
+                            } else if mac::keychain_set("groq-key", self.groq_key.trim()).is_ok() {
+                                self.groq_key_saved = true;
+                            }
+                        }
+                        if ui.button("Test").clicked() && !self.groq_key.trim().is_empty() {
+                            self.groq_test = match groq::test(&self.groq_key, &self.settings.groq_fast_model) {
+                                Ok(m) => m,
+                                Err(e) => e,
+                            };
+                        }
+                    });
+                    ui.label(RichText::new(if self.groq_key_saved { "Key saved" } else { "No key saved" }).size(11.5).color(if self.groq_key_saved { GREEN } else { pal.sub }));
+                    if !self.groq_test.is_empty() {
+                        ui.label(RichText::new(&self.groq_test).size(11.5).color(pal.sub));
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Writing model");
+                        changed |= ui.text_edit_singleline(&mut self.settings.groq_model).changed();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Fast model (analysis, summaries)");
+                        changed |= ui.text_edit_singleline(&mut self.settings.groq_fast_model).changed();
+                    });
                     ui.add_space(6.0);
                     ui.label(RichText::new("Anthropic API key (optional)").strong());
                     ui.label(RichText::new("Paste a key to use Claude instead, for better writing and summaries. This uses your API credit. The key is kept in your Mac's Keychain.").size(12.0).color(pal.sub));

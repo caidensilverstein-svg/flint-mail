@@ -146,6 +146,18 @@ pub struct Settings {
     pub zoom: f32,
     #[serde(default)]
     pub sync_read_to_gmail: bool,
+    #[serde(default = "default_groq_model")]
+    pub groq_model: String,
+    #[serde(default = "default_groq_fast_model")]
+    pub groq_fast_model: String,
+}
+
+fn default_groq_model() -> String {
+    crate::groq::DEFAULT_MODEL.into()
+}
+
+fn default_groq_fast_model() -> String {
+    crate::groq::DEFAULT_FAST_MODEL.into()
 }
 
 fn default_zoom() -> f32 {
@@ -194,6 +206,8 @@ impl Default for Settings {
             hotkey_migrated: true,
             zoom: default_zoom(),
             sync_read_to_gmail: false,
+            groq_model: default_groq_model(),
+            groq_fast_model: default_groq_fast_model(),
         }
     }
 }

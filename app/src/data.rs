@@ -119,6 +119,8 @@ pub struct Template {
     pub name: String,
     pub subject: String,
     pub body: String,
+    #[serde(default)]
+    pub uses: u32,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -168,6 +170,8 @@ pub struct Settings {
     pub menu_quick: bool,
     #[serde(default = "default_true")]
     pub menu_clipboard: bool,
+    #[serde(default)]
+    pub templates_seeded: bool,
 }
 
 fn default_true() -> bool {
@@ -210,16 +214,19 @@ impl Default for Settings {
                     name: "Meeting follow-up".into(),
                     subject: "Notes from today".into(),
                     body: "Hi {name},\n\nThanks for the time today. Here is a quick recap of what we agreed:\n\n- \n- \n\nLet me know if I missed anything.".into(),
+                    uses: 0,
                 },
                 Template {
                     name: "Not right now".into(),
                     subject: "".into(),
                     body: "Hi {name},\n\nThanks for reaching out. This isn't a fit for us right now, but I'll keep your note on file.".into(),
+                    uses: 0,
                 },
                 Template {
                     name: "Intro".into(),
                     subject: "Introduction".into(),
                     body: "Hi both,\n\nConnecting you two since you're working on similar problems. I'll let you take it from here.".into(),
+                    uses: 0,
                 },
             ],
             accounts: Vec::new(),
@@ -239,6 +246,7 @@ impl Default for Settings {
             menu_unread: true,
             menu_quick: true,
             menu_clipboard: true,
+            templates_seeded: false,
         }
     }
 }

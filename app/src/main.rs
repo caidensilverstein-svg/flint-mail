@@ -10,6 +10,7 @@ mod mechanics;
 mod menumodel;
 mod net;
 mod snap;
+mod templates;
 mod theme;
 #[cfg(target_os = "macos")]
 mod tray;

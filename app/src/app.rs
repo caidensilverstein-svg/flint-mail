@@ -372,6 +372,7 @@ pub struct FlintApp {
     groq_test: String,
     copilot_stream_open: bool,
     task_sources: HashMap<String, String>,
+    template_query: String,
     home_dismissed: HashSet<String>,
     home_cache: Option<(std::time::Instant, Vec<crate::home::Card>)>,
     clip_text: String,
@@ -476,6 +477,11 @@ impl FlintApp {
         let mut settings = settings;
         let start_home = settings.start_on_home && !shot_mode;
         let mut migrated_now = false;
+        if !settings.templates_seeded && !shot_mode {
+            crate::templates::merge_starters(&mut settings.templates);
+            settings.templates_seeded = true;
+            migrated_now = true;
+        }
         if !settings.hotkey_migrated && !shot_mode {
             settings.close_to_tray = true;
             settings.menu_bar = true;
@@ -517,6 +523,7 @@ impl FlintApp {
             groq_key,
             groq_test: String::new(),
             copilot_stream_open: false,
+            template_query: String::new(),
             task_sources: if shot_mode { HashMap::new() } else { reader_ai::load_task_sources() },
             home_dismissed: HashSet::new(),
             home_cache: None,
@@ -3818,6 +3825,8 @@ impl FlintApp {
         let mut open = true;
         let mut send: Option<Option<DateTime<Local>>> = None;
         let mut ai_req: Option<(String, String, String)> = None;
+        let mut used_template: Option<usize> = None;
+        let mut new_template: Option<data::Template> = None;
         let now = Local::now();
         let accounts = self.accounts();
         let slots = self.free_slots(now, 3);
@@ -3874,19 +3883,31 @@ impl FlintApp {
                 ui.separator();
                 ui.horizontal_wrapped(|ui| {
                     ui.menu_button("Templates", |ui| {
-                        for t in &self.settings.templates {
-                            if ui.button(&t.name).clicked() {
-                                let first = c.to_name.split_whitespace().next().unwrap_or("there").to_string();
-                                c.body = format!("{}\n\n{}", t.body.replace("{name}", &first), self.settings.signature);
-                                if c.subject.is_empty() {
-                                    c.subject = t.subject.clone();
+                        ui.add(egui::TextEdit::singleline(&mut self.template_query).hint_text("Search templates").desired_width(230.0));
+                        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                            for i in crate::templates::rank(&self.settings.templates, &self.template_query) {
+                                let t = &self.settings.templates[i];
+                                if ui.button(&t.name).on_hover_text(&t.body).clicked() {
+                                    let my_name = self.settings.signature.lines().last().unwrap_or("").trim().to_string();
+                                    let text = crate::templates::expand(&t.body, &c.to_name, &my_name, now.date_naive());
+                                    c.body = if c.reply_to.is_some() { format!("{}{}", text, c.body) } else { format!("{}\n\n{}", text, self.settings.signature) };
+                                    if c.subject.is_empty() {
+                                        c.subject = t.subject.clone();
+                                    }
+                                    used_template = Some(i);
+                                    ui.close_menu();
                                 }
-                                ui.close_menu();
                             }
-                        }
+                        });
                     });
                     if ui.button("Signature").clicked() {
                         c.body = format!("{}\n\n{}", c.body.trim_end(), self.settings.signature);
+                    }
+                    if ui.button("Save as template").clicked() && !c.body.trim().is_empty() {
+                        let sig = self.settings.signature.trim();
+                        let body = if sig.is_empty() { c.body.trim().to_string() } else { c.body.replace(sig, "").trim().to_string() };
+                        let name = if c.subject.trim().is_empty() { body.chars().take(28).collect::<String>() } else { c.subject.trim().to_string() };
+                        new_template = Some(data::Template { name, subject: c.subject.clone(), body, uses: 0 });
                     }
                     if ui.button("Attach file").clicked() {
                         let tx = self.net_tx.clone();
@@ -4007,7 +4028,8 @@ impl FlintApp {
                             }
                         });
                 }
-                let body_h = (ui.available_height() - 44.0).max(120.0);
+                let slash = crate::templates::slash_query(&c.body).map(|q| q.to_lowercase());
+                let body_h = (ui.available_height() - 44.0 - if slash.is_some() { 32.0 } else { 0.0 }).max(120.0);
                 egui::ScrollArea::vertical().id_salt("composer-body").max_height(body_h).show(ui, |ui| {
                     if !c.attachments.is_empty() {
             let mut remove = None;
@@ -4033,6 +4055,26 @@ impl FlintApp {
         }
         ui.add_sized([ui.available_width(), body_h], egui::TextEdit::multiline(&mut c.body).id(body_id).hint_text("Write your message..."));
                 });
+                if let Some(q) = &slash {
+                    let my_name = self.settings.signature.lines().last().unwrap_or("").trim().to_string();
+                    let mut items: Vec<(String, String)> = vec![("sig".into(), self.settings.signature.clone()), ("date".into(), now.format("%A, %B %-d").to_string()), ("times".into(), slots.iter().map(|s| s.format("%a %b %-d, %-I:%M %p").to_string()).collect::<Vec<_>>().join("\n"))];
+                    for i in crate::templates::rank(&self.settings.templates, "") {
+                        let t = &self.settings.templates[i];
+                        items.push((crate::templates::slug(&t.name), crate::templates::expand(&t.body, &c.to_name, &my_name, now.date_naive())));
+                    }
+                    let mut pick: Option<String> = None;
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Insert").size(11.5).color(pal.sub));
+                        for (label, text) in items.iter().filter(|(l, _)| l.contains(q.as_str())).take(6) {
+                            if ui.add(egui::Button::new(RichText::new(format!("/{}", label)).size(12.0).color(ACCENT)).fill(pal.sel)).clicked() {
+                                pick = Some(text.clone());
+                            }
+                        }
+                    });
+                    if let Some(text) = pick {
+                        c.body = crate::templates::replace_slash(&c.body, &text);
+                    }
+                }
                 ui.horizontal(|ui| {
                     let cmd_enter = ui.input(|i| i.modifiers.command && i.key_pressed(Key::Enter));
                     if primary_button(ui, "Send  (Cmd+Enter)").clicked() || cmd_enter {
@@ -4053,6 +4095,17 @@ impl FlintApp {
                     });
                 });
             });
+        if let Some(i) = used_template {
+            if let Some(t) = self.settings.templates.get_mut(i) {
+                t.uses += 1;
+            }
+            self.save_settings();
+        }
+        if let Some(t) = new_template {
+            self.toast(format!("Saved template: {}", t.name));
+            self.settings.templates.push(t);
+            self.save_settings();
+        }
         if let Some((sys, prompt, fb)) = ai_req {
             c.ai_busy = true;
             self.composer = Some(c);
@@ -4662,7 +4715,13 @@ impl FlintApp {
                     ui.label(RichText::new("Signature").strong());
                     changed |= ui.add(egui::TextEdit::multiline(&mut self.settings.signature).desired_rows(3).desired_width(f32::INFINITY)).changed();
                     ui.add_space(6.0);
-                    ui.label(RichText::new("Templates  ({name} becomes the recipient's first name)").strong());
+                    ui.label(RichText::new("Templates  ({name} recipient first name, {my_name}, {date}, {day})").strong());
+                    ui.label(RichText::new("In an email, type / to insert one, or use Templates. Most used come first.").size(12.0).color(pal.sub));
+                    if ui.button("Add starter templates").clicked() {
+                        let n = crate::templates::merge_starters(&mut self.settings.templates);
+                        changed = true;
+                        self.toast(if n == 0 { "You already have all the starters".to_string() } else { format!("Added {} templates", n) });
+                    }
                     let mut del = None;
                     for (i, t) in self.settings.templates.iter_mut().enumerate() {
                         ui.horizontal(|ui| {
@@ -4678,7 +4737,7 @@ impl FlintApp {
                         changed = true;
                     }
                     if ui.button("+ New template").clicked() {
-                        self.settings.templates.push(data::Template { name: "New template".into(), subject: String::new(), body: String::new() });
+                        self.settings.templates.push(data::Template { name: "New template".into(), subject: String::new(), body: String::new(), uses: 0 });
                         changed = true;
                     }
                 }

@@ -301,8 +301,8 @@ mod tests {
         let many = Extras { cleanups: vec![CleanIn { id: 1, from: "Deals".into(), count: 9 }], newsletters: 7 };
         let cards = rank(now(), &[], &[], &[], &[], &many, &HashSet::new(), 5);
         assert_eq!(cards.len(), 2);
-        assert_eq!(cards[0].kind, Kind::Digest);
-        assert_eq!(cards[1].kind, Kind::Cleanup(1));
+        assert_eq!(cards[0].kind, Kind::Cleanup(1));
+        assert_eq!(cards[1].kind, Kind::Digest);
     }
 
     #[test]

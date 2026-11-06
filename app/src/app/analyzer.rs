@@ -25,15 +25,20 @@ impl FlintApp {
         if self.insight_inflight.len() >= 2 || self.last_analyze.elapsed().as_millis() < 700 || self.analyze_pause_until > std::time::Instant::now() {
             return;
         }
+        if self.insight_budget == 0 {
+            return;
+        }
         let cutoff = Local::now() - Duration::days(14);
+        let recent = Local::now() - Duration::days(3);
         let today = Local::now().date_naive();
         let next = self
             .mails
             .iter()
-            .filter(|m| !m.trashed && !m.done && m.received > cutoff && !m.body.is_empty() && !self.insight_tried.contains(&m.id) && self.insight_of(m).is_none())
+            .filter(|m| !m.trashed && !m.done && m.received > cutoff && (!m.read || m.received > recent) && !m.body.is_empty() && !self.insight_tried.contains(&m.id) && self.insight_of(m).is_none())
             .max_by_key(|m| m.received)
             .map(|m| (m.id, insights::build_prompt(m, today)));
         let Some((id, prompt)) = next else { return };
+        self.insight_budget -= 1;
         self.insight_tried.insert(id);
         self.insight_inflight.insert(id);
         self.last_analyze = std::time::Instant::now();

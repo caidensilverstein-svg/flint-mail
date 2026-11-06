@@ -1,0 +1,21 @@
+Flint Mail Copyright 2026 Caiden Silverstein
+This product includes software developed by Caiden Silverstein (https://github.com/caidensilverstein-svg/flint-mail).
+
+Third-Party Notices & System Frameworks
+This product utilizes native Apple system frameworks provided under Apple developer agreements:
+
+Open-Source Libraries (Rust crates)
+This software is built with the following open-source libraries, each used under its own license (MIT, Apache License 2.0, or MIT/Apache-2.0 dual license):
+
+* eframe / egui (egui 0.29). Copyright (c) Emil Ernerfeldt and contributors. MIT or Apache-2.0.
+* ab_glyph. Copyright (c) Alex Butler and contributors. Apache-2.0.
+* image. Copyright (c) The image-rs developers. MIT or Apache-2.0.
+* chrono and chrono-tz. Copyright (c) Kang Seonghoon and contributors. MIT or Apache-2.0.
+* serde and serde_json. Copyright (c) Erick Tryzelaar, David Tolnay and contributors. MIT or Apache-2.0.
+* ureq. Copyright (c) Martin Algesten and contributors. MIT or Apache-2.0.
+* dirs. Copyright (c) Simon Ochsenreither and contributors. MIT or Apache-2.0.
+* imap. Copyright (c) Jon Gjengset and contributors. MIT or Apache-2.0.
+* native-tls. Copyright (c) Steven Fackler and contributors. MIT or Apache-2.0.
+* mailparse. Copyright (c) Kartikaya Gupta and contributors. 0BSD.
+* lettre. Copyright (c) Alexis Mousset and contributors. MIT.
+* tray-icon, muda and global-hotkey. Copyright (c) Tauri Programme within The Commons Conservancy. MIT or Apache-2.0.

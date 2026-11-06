@@ -2158,7 +2158,7 @@ fn badge(ui: &mut Ui, text: &str) {
 
 const ROW_H: f32 = 68.0;
 
-fn mail_row(ui: &mut Ui, m: &Mail, selected: bool, pal: Pal, now: DateTime<Local>) -> egui::Response {
+fn mail_row(ui: &mut Ui, m: &Mail, selected: bool, pal: Pal, now: DateTime<Local>) -> (egui::Response, Option<Act>) {
     let w = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, ROW_H), Sense::click());
     if resp.hovered() {
@@ -2180,10 +2180,13 @@ fn mail_row(ui: &mut Ui, m: &Mail, selected: bool, pal: Pal, now: DateTime<Local
     let left = rect.left() + 20.0;
     avatar(ui, egui::pos2(left + 18.0, rect.center().y), 17.0, &m.from_name);
     let x = left + 46.0;
+    let hover = ui.rect_contains_pointer(rect);
     let time = mech::list_time(m.received, now);
     let time_g = one_line(ui, &time, 11.5, pal.sub, 90.0);
-    let time_w = time_g.size().x;
-    painter.galley(egui::pos2(rect.right() - 18.0 - time_w, rect.top() + 12.0), time_g, pal.sub);
+    let time_w = if hover { 140.0 - 70.0 } else { time_g.size().x };
+    if !hover {
+        painter.galley(egui::pos2(rect.right() - 18.0 - time_g.size().x, rect.top() + 12.0), time_g, pal.sub);
+    }
     let name_color = if m.read { pal.sub } else { pal.text };
     let name_g = one_line(ui, &m.from_name, 14.0, name_color, rect.right() - x - time_w - 70.0);
     let name_w = name_g.size().x;
@@ -2216,7 +2219,26 @@ fn mail_row(ui: &mut Ui, m: &Mail, selected: bool, pal: Pal, now: DateTime<Local
     }
     let sn = one_line(ui, &snippet, 12.0, pal.sub, rect.right() - x - 20.0);
     painter.galley(egui::pos2(x, rect.top() + 47.0), sn, pal.sub);
-    resp
+    let mut quick = None;
+    if hover {
+        let items: [(&str, f32, Act); 3] = [("Pin", 36.0, Act::Pin(m.id)), ("Later", 46.0, Act::Snooze(m.id, Preset::Tomorrow)), ("Done", 44.0, Act::Done(m.id))];
+        let mut right = rect.right() - 16.0;
+        for (i, (label, w, act)) in items.into_iter().enumerate() {
+            let pill = egui::Rect::from_min_size(egui::pos2(right - w, rect.top() + 7.0), egui::vec2(w, 22.0));
+            right -= w + 6.0;
+            let pr = ui.interact(pill, ui.id().with(("quick", m.id, i)), Sense::click());
+            let (fill, fg) = if pr.hovered() { (ACCENT, Color32::WHITE) } else { (pal.card, pal.text) };
+            painter.rect(pill, Rounding::same(11.0), fill, Stroke::new(1.0_f32, pal.border));
+            painter.text(pill.center(), Align2::CENTER_CENTER, label, FontId::proportional(11.5), fg);
+            if pr.clicked() {
+                quick = Some(act);
+            }
+            if pr.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+        }
+    }
+    (resp, quick)
 }
 
 // ---------- panels ----------
@@ -2611,8 +2633,10 @@ impl FlintApp {
                                 ui.allocate_space(egui::vec2(ui.available_width(), ROW_H));
                                 continue;
                             }
-                            let r = mail_row(ui, m, self.selected == Some(m.id), pal, now);
-                            if r.clicked() {
+                            let (r, quick) = mail_row(ui, m, self.selected == Some(m.id), pal, now);
+                            if let Some(q) = quick {
+                                acts.push(q);
+                            } else if r.clicked() {
                                 acts.push(Act::Select(m.id));
                             }
                             self.row_menu(&r, m, &mut acts);
@@ -2777,8 +2801,10 @@ impl FlintApp {
             });
             let limit = if expanded { items.len() } else { mech::CARD_ITEMS_LIMIT.min(items.len()) };
             for m in items.iter().take(limit) {
-                let r = mail_row(ui, m, self.selected == Some(m.id), pal, now);
-                if r.clicked() {
+                let (r, quick) = mail_row(ui, m, self.selected == Some(m.id), pal, now);
+                if let Some(q) = quick {
+                    acts.push(q);
+                } else if r.clicked() {
                     acts.push(Act::Select(m.id));
                 }
                 self.row_menu(&r, m, acts);

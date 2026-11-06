@@ -5,8 +5,7 @@ Third-Party Notices & System Frameworks
 This product utilizes native Apple system frameworks provided under Apple developer agreements:
 
 Open-Source Libraries (Rust crates)
-This software is built with the following open-source libraries, each used under its own license (MIT, Apache License 2.0, or MIT/Apache-2.0 dual license):
-
+This software is built with the following open-source libraries, each used subject to their own liscences.
 * eframe / egui (egui 0.29). Copyright (c) Emil Ernerfeldt and contributors. MIT or Apache-2.0.
 * ab_glyph. Copyright (c) Alex Butler and contributors. Apache-2.0.
 * image. Copyright (c) The image-rs developers. MIT or Apache-2.0.

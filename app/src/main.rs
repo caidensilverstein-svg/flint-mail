@@ -2,6 +2,7 @@ mod ai;
 mod app;
 mod data;
 mod groq;
+mod insights;
 mod ics;
 mod mac;
 mod mechanics;

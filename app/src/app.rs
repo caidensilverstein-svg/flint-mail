@@ -11,6 +11,8 @@ use eframe::egui::{
 };
 
 use crate::ai::{self, AiResult, Target, Tone};
+mod analyzer;
+
 use crate::groq;
 use crate::ics;
 use crate::data::{self, Account, CalendarInfo, Category, Comment, Event, Mail, Scheduled, SentMail, Settings};
@@ -361,6 +363,13 @@ pub struct FlintApp {
     groq_key_saved: bool,
     groq_test: String,
     copilot_stream_open: bool,
+    insights: HashMap<String, crate::insights::Insight>,
+    insight_inflight: HashSet<u64>,
+    insight_tried: HashSet<u64>,
+    insights_dirty: bool,
+    last_insights_save: std::time::Instant,
+    last_analyze: std::time::Instant,
+    analyze_pause_until: std::time::Instant,
 
     mode: Mode,
     folder: Folder,
@@ -495,6 +504,13 @@ impl FlintApp {
             groq_key,
             groq_test: String::new(),
             copilot_stream_open: false,
+            insights: if shot_mode { HashMap::new() } else { crate::insights::load() },
+            insight_inflight: HashSet::new(),
+            insight_tried: HashSet::new(),
+            insights_dirty: false,
+            last_insights_save: std::time::Instant::now(),
+            last_analyze: std::time::Instant::now(),
+            analyze_pause_until: std::time::Instant::now(),
             mode: Mode::Mail,
             folder: Folder::SmartInbox,
             selected: Some(1),
@@ -1095,7 +1111,7 @@ impl FlintApp {
                         self.copilot_busy = false;
                     }
                 }
-                Target::Insight(_) => {}
+                Target::Insight(id) => self.apply_insight(id, &r.text, r.used_model, r.error.as_deref()),
                 Target::EventNotes(id) => {
                     if let Some(e) = self.events.iter_mut().find(|e| e.id == id) {
                         e.notes = format!("{}\n\nSummary:\n{}", e.notes.trim(), r.text);
@@ -4608,6 +4624,7 @@ impl FlintApp {
                         ui.label("Claude model (used with a key)");
                         changed |= ui.text_edit_singleline(&mut self.settings.ai_model).changed();
                     });
+                    changed |= ui.checkbox(&mut self.settings.ai_analyze, "Read new email in the background to find events, tasks and replies (needs a Groq or Claude key; sends email text to that provider)").changed();
                     changed |= ui.checkbox(&mut self.settings.ai_auto_summary, "Summarize each email when I open it").changed();
                     if ui.checkbox(&mut self.settings.ai_auto_labels, "Auto-label incoming emails (Work, Finance, Travel...)").changed() {
                         changed = true;
@@ -5280,6 +5297,7 @@ impl eframe::App for FlintApp {
         }
         self.poll_hotkey(ctx);
         self.tick(ctx);
+        self.analyze_tick(ctx);
         self.shortcuts(ctx);
 
         if ctx.input(|i| i.viewport().close_requested()) && self.settings.close_to_tray && !self.quitting && self.screenshot.is_none() {

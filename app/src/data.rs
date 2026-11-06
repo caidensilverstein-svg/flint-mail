@@ -150,6 +150,12 @@ pub struct Settings {
     pub groq_model: String,
     #[serde(default = "default_groq_fast_model")]
     pub groq_fast_model: String,
+    #[serde(default = "default_true")]
+    pub ai_analyze: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_groq_model() -> String {
@@ -208,6 +214,7 @@ impl Default for Settings {
             sync_read_to_gmail: false,
             groq_model: default_groq_model(),
             groq_fast_model: default_groq_fast_model(),
+            ai_analyze: true,
         }
     }
 }

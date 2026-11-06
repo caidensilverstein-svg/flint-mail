@@ -94,6 +94,19 @@ impl FlintApp {
         ui.add_space(4.0);
     }
 
+    pub(super) fn voice_examples(&self) -> String {
+        if !self.settings.write_like_me {
+            return String::new();
+        }
+        let mut sent: Vec<&SentMail> = self.sent.iter().filter(|s| s.body.split_whitespace().count() >= 8).collect();
+        sent.sort_by(|a, b| b.at.cmp(&a.at));
+        let samples: Vec<String> = sent.iter().take(3).map(|s| insights::trim_body(&s.body, 350)).filter(|b| !b.is_empty()).collect();
+        if samples.is_empty() {
+            return String::new();
+        }
+        format!("\n\nMatch the tone and phrasing of these emails I wrote before:\n---\n{}\n---", samples.join("\n---\n"))
+    }
+
     pub(super) fn make_task_from_mail(&mut self, id: u64) {
         let Some(m) = self.mail(id) else { return };
         let key = mail_key(&m.account, &m.from_addr, m.received);

@@ -174,6 +174,8 @@ pub struct Settings {
     pub templates_seeded: bool,
     #[serde(default)]
     pub show_team: bool,
+    #[serde(default = "default_true")]
+    pub write_like_me: bool,
 }
 
 fn default_true() -> bool {
@@ -250,6 +252,7 @@ impl Default for Settings {
             menu_clipboard: true,
             templates_seeded: false,
             show_team: false,
+            write_like_me: true,
         }
     }
 }

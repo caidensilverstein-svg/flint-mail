@@ -161,6 +161,7 @@ struct Composer {
     attachments: Vec<PathBuf>,
     focus_top: bool,
     streaming: bool,
+    warned_attach: bool,
 }
 
 impl Composer {
@@ -182,6 +183,7 @@ impl Composer {
             attachments: Vec::new(),
             focus_top: false,
             streaming: false,
+            warned_attach: false,
         }
     }
 }
@@ -376,6 +378,7 @@ pub struct FlintApp {
     copilot_stream_open: bool,
     task_sources: HashMap<String, String>,
     template_query: String,
+    show_quoted: HashSet<u64>,
     snooze_input: String,
     home_dismissed: HashSet<String>,
     home_cache: Option<(std::time::Instant, Vec<crate::home::Card>)>,
@@ -529,6 +532,7 @@ impl FlintApp {
             groq_test: String::new(),
             copilot_stream_open: false,
             template_query: String::new(),
+            show_quoted: HashSet::new(),
             snooze_input: String::new(),
             task_sources: if shot_mode { HashMap::new() } else { reader_ai::load_task_sources() },
             home_dismissed: HashSet::new(),
@@ -1767,6 +1771,14 @@ impl FlintApp {
             self.composer = Some(c);
             return;
         }
+        let mut c = c;
+        let own_text = crate::insights::trim_body(&c.body, 4000).to_lowercase();
+        if !c.warned_attach && c.attachments.is_empty() && ["attached", "attachment", "attaching", "enclosed"].iter().any(|w| own_text.contains(w)) {
+            c.warned_attach = true;
+            self.toast("You mention an attachment but none is attached. Press send again to send anyway");
+            self.composer = Some(c);
+            return;
+        }
         let now = Local::now();
         let accounts = self.accounts();
         let account = accounts.get(c.from).cloned().unwrap_or_else(|| accounts[0].clone());
@@ -2557,7 +2569,17 @@ impl FlintApp {
                         self.gatekeeper(ui, pal, &mut acts);
                     } else {
                         let list = self.visible_mails(self.folder);
-                        if list.is_empty() {
+                        if list.is_empty() && !self.syncing.is_empty() && self.search.is_empty() {
+                            for i in 0..7 {
+                                let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::hover());
+                                let a = 0.55 + 0.45 * ((ui.input(|i| i.time) as f32 * 2.0 + i as f32 * 0.6).sin() * 0.5 + 0.5);
+                                let c = pal.alt.gamma_multiply(a);
+                                ui.painter().circle_filled(egui::pos2(r.left() + 38.0, r.center().y), 17.0, c);
+                                ui.painter().rect_filled(egui::Rect::from_min_size(egui::pos2(r.left() + 66.0, r.top() + 16.0), egui::vec2(r.width() * 0.4, 11.0)), Rounding::same(4.0), c);
+                                ui.painter().rect_filled(egui::Rect::from_min_size(egui::pos2(r.left() + 66.0, r.top() + 36.0), egui::vec2(r.width() * 0.62, 10.0)), Rounding::same(4.0), c);
+                            }
+                            ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
+                        } else if list.is_empty() {
                             ui.add_space(70.0);
                             let (title, hint) = if !self.search.is_empty() {
                                 ("No matches", "Try fewer words, or a filter like from:maya subject:launch is:unread.")
@@ -3098,7 +3120,21 @@ impl FlintApp {
                     });
                 ui.add_space(12.0);
                 self.reader_insights(ui, pal, &m, &mut acts);
-                ui.label(RichText::new(&m.body).size(14.0).color(pal.text));
+                let (main_text, quoted_text) = crate::insights::split_quoted(&m.body);
+                ui.label(RichText::new(&main_text).size(14.0).color(pal.text));
+                if !quoted_text.is_empty() {
+                    let open = self.show_quoted.contains(&id);
+                    if ui.add(egui::Button::new(RichText::new(if open { "Hide quoted text" } else { "Show quoted text" }).size(12.0).color(pal.sub)).frame(false)).clicked() {
+                        if open {
+                            self.show_quoted.remove(&id);
+                        } else {
+                            self.show_quoted.insert(id);
+                        }
+                    }
+                    if open {
+                        ui.label(RichText::new(&quoted_text).size(13.0).color(pal.sub));
+                    }
+                }
                 ui.add_space(10.0);
                 if !m.attachments.is_empty() {
                     ui.horizontal_wrapped(|ui| {
@@ -4109,7 +4145,7 @@ impl FlintApp {
                                     let reply_ctx = c.reply_to.and_then(|id| self.mail(id)).map(|m| format!("\n\nThis is a reply to:\nFrom: {}\nSubject: {}\n{}", m.from_name, m.subject, m.body)).unwrap_or_default();
                                     ai_req = Some((
                                         "You write clear, friendly emails. Return only the email body.".into(),
-                                        format!("Write an email to {}. Instructions: {}. Sign off with:\n{}{}", if c.to_name.is_empty() { c.to.clone() } else { c.to_name.clone() }, c.ai_prompt, self.settings.signature, reply_ctx),
+                                        format!("Write an email to {}. Instructions: {}. Sign off with:\n{}{}{}", if c.to_name.is_empty() { c.to.clone() } else { c.to_name.clone() }, c.ai_prompt, self.settings.signature, reply_ctx, self.voice_examples()),
                                         format!("{}\n\n{}", ai::draft_from_prompt(&c.ai_prompt, &c.to_name), self.settings.signature),
                                     ));
                                 }
@@ -4827,6 +4863,7 @@ impl FlintApp {
                         changed |= ui.text_edit_singleline(&mut self.settings.ai_model).changed();
                     });
                     changed |= ui.checkbox(&mut self.settings.ai_analyze, "Read new email in the background to find events, tasks and replies (needs a Groq or Claude key; sends email text to that provider)").changed();
+                    changed |= ui.checkbox(&mut self.settings.write_like_me, "Write drafts in my voice (uses a few of my sent emails as examples)").changed();
                     changed |= ui.checkbox(&mut self.settings.ai_auto_summary, "Summarize each email when I open it").changed();
                     if ui.checkbox(&mut self.settings.ai_auto_labels, "Auto-label incoming emails (Work, Finance, Travel...)").changed() {
                         changed = true;

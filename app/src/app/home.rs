@@ -197,7 +197,7 @@ impl FlintApp {
                     ui.label(RichText::new(now.format("%A, %B %-d").to_string()).size(13.0).color(pal.sub));
                     ui.add_space(2.0);
                     let hello = if first_name.is_empty() { hm::greeting(now).to_string() } else { format!("{}, {}", hm::greeting(now), first_name) };
-                    ui.label(RichText::new(hello).size(30.0).strong().color(pal.text));
+                    ui.label(RichText::new(hello).font(theme::serif(36.0)).color(pal.text));
                     ui.add_space(4.0);
                     let sub = if setup_needed {
                         "Add your mail account to get started.".to_string()

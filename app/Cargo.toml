@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 eframe = { version = "0.29", features = ["persistence"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+ab_glyph = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 serde = { version = "1", features = ["derive"] }

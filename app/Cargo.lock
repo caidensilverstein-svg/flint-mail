@@ -1354,6 +1354,7 @@ dependencies = [
 name = "flint-mail"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "chrono",
  "chrono-tz",
  "dirs 5.0.1",

@@ -1,18 +1,18 @@
 use eframe::egui::{self, Color32, Rounding, Stroke};
 
-// Palette from the original's app-colors.css (light and dark tokens).
-pub const SIDEBAR_BG: Color32 = Color32::from_rgb(0x28, 0x2a, 0x2e);
-pub const SIDEBAR_TEXT: Color32 = Color32::from_rgb(0xae, 0xb8, 0xc5);
-pub const SIDEBAR_SUB: Color32 = Color32::from_rgb(0x66, 0x70, 0x7e);
-pub const SIDEBAR_SEL: Color32 = Color32::from_rgb(0x00, 0x70, 0xe6);
-pub const SIDEBAR_HOVER: Color32 = Color32::from_rgba_premultiplied(26, 26, 26, 26);
-pub const SIDEBAR_LINE: Color32 = Color32::from_rgb(0x3d, 0x3f, 0x43);
-pub const ACCENT: Color32 = Color32::from_rgb(0x15, 0x7e, 0xfb);
-pub const ACCENT_DEEP: Color32 = Color32::from_rgb(0x00, 0x53, 0xcf);
-pub const ORANGE: Color32 = Color32::from_rgb(0xf5, 0x8a, 0x07);
-pub const RED: Color32 = Color32::from_rgb(0xe5, 0x48, 0x4d);
-pub const GREEN: Color32 = Color32::from_rgb(0x2f, 0xb3, 0x5c);
-pub const PURPLE: Color32 = Color32::from_rgb(0x8e, 0x5c, 0xe6);
+// Warm editorial palette: paper and ink, one deep green accent.
+pub const SIDEBAR_BG: Color32 = Color32::from_rgb(0x1e, 0x1d, 0x1b);
+pub const SIDEBAR_TEXT: Color32 = Color32::from_rgb(0xb9, 0xb3, 0xa8);
+pub const SIDEBAR_SUB: Color32 = Color32::from_rgb(0x7c, 0x77, 0x6d);
+pub const SIDEBAR_SEL: Color32 = Color32::from_rgb(0x2f, 0x5d, 0x50);
+pub const SIDEBAR_HOVER: Color32 = Color32::from_rgba_premultiplied(24, 24, 22, 24);
+pub const SIDEBAR_LINE: Color32 = Color32::from_rgb(0x33, 0x31, 0x2e);
+pub const ACCENT: Color32 = Color32::from_rgb(0x2c, 0x5e, 0x4f);
+pub const ACCENT_DEEP: Color32 = Color32::from_rgb(0x1e, 0x42, 0x37);
+pub const ORANGE: Color32 = Color32::from_rgb(0xb7, 0x79, 0x1f);
+pub const RED: Color32 = Color32::from_rgb(0xb5, 0x48, 0x3f);
+pub const GREEN: Color32 = Color32::from_rgb(0x3d, 0x7a, 0x5e);
+pub const PURPLE: Color32 = Color32::from_rgb(0x6b, 0x5b, 0x95);
 
 #[derive(Clone, Copy)]
 pub struct Pal {
@@ -30,25 +30,25 @@ impl Pal {
     pub fn new(dark: bool) -> Self {
         if dark {
             Pal {
-                bg: Color32::from_rgb(0x1c, 0x1d, 0x20),
-                alt: Color32::from_rgb(0x23, 0x25, 0x28),
-                text: Color32::from_rgb(0xde, 0xe3, 0xeb),
-                sub: Color32::from_rgb(0x86, 0x8d, 0x97),
-                sel: Color32::from_rgb(0x19, 0x33, 0x50),
-                hover: Color32::from_rgb(0x2a, 0x2c, 0x30),
-                border: Color32::from_rgb(0x33, 0x36, 0x3b),
-                card: Color32::from_rgb(0x26, 0x28, 0x2c),
+                bg: Color32::from_rgb(0x17, 0x16, 0x14),
+                alt: Color32::from_rgb(0x1f, 0x1d, 0x1b),
+                text: Color32::from_rgb(0xe8, 0xe4, 0xdc),
+                sub: Color32::from_rgb(0x8f, 0x89, 0x7e),
+                sel: Color32::from_rgb(0x24, 0x33, 0x2d),
+                hover: Color32::from_rgb(0x25, 0x23, 0x20),
+                border: Color32::from_rgb(0x2e, 0x2b, 0x28),
+                card: Color32::from_rgb(0x20, 0x1e, 0x1c),
             }
         } else {
             Pal {
-                bg: Color32::WHITE,
-                alt: Color32::from_rgb(0xf6, 0xf7, 0xf9),
-                text: Color32::from_rgb(0x14, 0x14, 0x14),
-                sub: Color32::from_rgb(0x66, 0x70, 0x7e),
-                sel: Color32::from_rgb(0xe5, 0xf2, 0xff),
-                hover: Color32::from_rgb(0xf3, 0xf5, 0xf8),
-                border: Color32::from_rgb(0xe6, 0xe8, 0xec),
-                card: Color32::WHITE,
+                bg: Color32::from_rgb(0xfa, 0xf8, 0xf4),
+                alt: Color32::from_rgb(0xf2, 0xef, 0xe9),
+                text: Color32::from_rgb(0x1b, 0x1a, 0x18),
+                sub: Color32::from_rgb(0x7a, 0x75, 0x6c),
+                sel: Color32::from_rgb(0xe6, 0xee, 0xe9),
+                hover: Color32::from_rgb(0xf1, 0xee, 0xe8),
+                border: Color32::from_rgb(0xe6, 0xe1, 0xd8),
+                card: Color32::from_rgb(0xff, 0xfe, 0xfc),
             }
         }
     }
@@ -62,9 +62,9 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     v.extreme_bg_color = pal.alt;
     v.faint_bg_color = pal.alt;
     v.hyperlink_color = ACCENT;
-    v.selection.bg_fill = if dark { Color32::from_rgb(0x0c, 0x58, 0xa7) } else { Color32::from_rgb(0xb4, 0xdc, 0xff) };
+    v.selection.bg_fill = if dark { Color32::from_rgb(0x2f, 0x5d, 0x50) } else { Color32::from_rgb(0xc9, 0xdd, 0xd3) };
     v.selection.stroke = Stroke::new(1.0_f32, ACCENT);
-    v.window_rounding = Rounding::same(10.0);
+    v.window_rounding = Rounding::same(12.0);
     v.window_stroke = Stroke::new(1.0_f32, pal.border);
     v.override_text_color = Some(pal.text);
     for w in [
@@ -74,7 +74,7 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         &mut v.widgets.active,
         &mut v.widgets.open,
     ] {
-        w.rounding = Rounding::same(6.0);
+        w.rounding = Rounding::same(7.0);
     }
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, pal.border);
     v.widgets.inactive.weak_bg_fill = pal.alt;
@@ -87,14 +87,14 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
 }
 
 const AVATAR: [Color32; 8] = [
-    Color32::from_rgb(0x15, 0x7e, 0xfb),
-    Color32::from_rgb(0x2f, 0xb3, 0x5c),
-    Color32::from_rgb(0xf5, 0x8a, 0x07),
-    Color32::from_rgb(0x8e, 0x5c, 0xe6),
-    Color32::from_rgb(0xe5, 0x48, 0x4d),
-    Color32::from_rgb(0x12, 0xa4, 0xb3),
-    Color32::from_rgb(0xd1, 0x4f, 0x9b),
-    Color32::from_rgb(0x5b, 0x6b, 0x82),
+    Color32::from_rgb(0x2c, 0x5e, 0x4f),
+    Color32::from_rgb(0x8a, 0x5a, 0x44),
+    Color32::from_rgb(0x4f, 0x6d, 0x8c),
+    Color32::from_rgb(0x6b, 0x5b, 0x95),
+    Color32::from_rgb(0xa0, 0x52, 0x4a),
+    Color32::from_rgb(0x3f, 0x80, 0x82),
+    Color32::from_rgb(0x9a, 0x6f, 0x2e),
+    Color32::from_rgb(0x5b, 0x64, 0x72),
 ];
 
 pub fn avatar_color(key: &str) -> Color32 {
@@ -115,3 +115,37 @@ pub fn initials(name: &str) -> String {
 }
 
 pub const CALENDAR_COLORS: [Color32; 4] = [ACCENT, GREEN, ORANGE, PURPLE];
+
+static SERIF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// A system serif for headings. Every candidate is parsed first because egui panics on a bad font file.
+pub fn install_fonts(ctx: &egui::Context) {
+    let candidates = [
+        "/System/Library/Fonts/NewYork.ttf",
+        "/System/Library/Fonts/Supplemental/Georgia.ttf",
+        "/Library/Fonts/Georgia.ttf",
+        "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+    ];
+    for path in candidates {
+        let Ok(bytes) = std::fs::read(path) else { continue };
+        if ab_glyph::FontVec::try_from_vec_and_index(bytes.clone(), 0).is_err() {
+            continue;
+        }
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert("flint-serif".into(), egui::FontData::from_owned(bytes));
+        let mut fam = vec!["flint-serif".to_string()];
+        fam.extend(fonts.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default());
+        fonts.families.insert(egui::FontFamily::Name("serif".into()), fam);
+        ctx.set_fonts(fonts);
+        SERIF.store(true, std::sync::atomic::Ordering::Relaxed);
+        return;
+    }
+}
+
+pub fn serif(size: f32) -> egui::FontId {
+    if SERIF.load(std::sync::atomic::Ordering::Relaxed) {
+        egui::FontId::new(size, egui::FontFamily::Name("serif".into()))
+    } else {
+        egui::FontId::proportional(size)
+    }
+}

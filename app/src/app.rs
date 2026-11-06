@@ -493,6 +493,7 @@ impl FlintApp {
                 settings.signature = format!("Best,\n{}", first);
             }
         }
+        theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx, settings.dark);
         cc.egui_ctx.set_zoom_factor(settings.zoom.clamp(0.8, 1.6));
         let (mails, sent, events) = data::sample(now);
@@ -2054,9 +2055,11 @@ fn badge(ui: &mut Ui, text: &str) {
         });
 }
 
+const ROW_H: f32 = 68.0;
+
 fn mail_row(ui: &mut Ui, m: &Mail, selected: bool, pal: Pal, now: DateTime<Local>) -> egui::Response {
     let w = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 62.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, ROW_H), Sense::click());
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
@@ -2068,49 +2071,50 @@ fn mail_row(ui: &mut Ui, m: &Mail, selected: bool, pal: Pal, now: DateTime<Local
     } else {
         pal.bg
     };
-    painter.rect_filled(rect.shrink2(egui::vec2(6.0, 1.0)), Rounding::same(8.0), bg);
-    let left = rect.left() + 14.0;
+    painter.rect_filled(rect.shrink2(egui::vec2(8.0, 2.0)), Rounding::same(10.0), bg);
     if !m.read {
-        painter.circle_filled(egui::pos2(left - 4.0, rect.center().y), 3.5, ACCENT);
+        let bar = egui::Rect::from_min_size(egui::pos2(rect.left() + 8.0, rect.top() + 16.0), egui::vec2(3.0, ROW_H - 32.0));
+        painter.rect_filled(bar, Rounding::same(2.0), ACCENT);
     }
-    avatar(ui, egui::pos2(left + 18.0, rect.center().y), 16.0, &m.from_name);
-    let x = left + 44.0;
+    let left = rect.left() + 20.0;
+    avatar(ui, egui::pos2(left + 18.0, rect.center().y), 17.0, &m.from_name);
+    let x = left + 46.0;
     let time = mech::list_time(m.received, now);
     let time_g = one_line(ui, &time, 11.5, pal.sub, 90.0);
     let time_w = time_g.size().x;
-    painter.galley(egui::pos2(rect.right() - 16.0 - time_w, rect.top() + 9.0), time_g, pal.sub);
+    painter.galley(egui::pos2(rect.right() - 18.0 - time_w, rect.top() + 12.0), time_g, pal.sub);
     let name_color = if m.read { pal.sub } else { pal.text };
-    let name_g = one_line(ui, &m.from_name, 13.5, name_color, rect.right() - x - time_w - 70.0);
+    let name_g = one_line(ui, &m.from_name, 14.0, name_color, rect.right() - x - time_w - 70.0);
     let name_w = name_g.size().x;
-    painter.galley(egui::pos2(x, rect.top() + 8.0), name_g, name_color);
-    let mut mx = x + name_w + 6.0;
-    let my = rect.top() + 16.0;
+    painter.galley(egui::pos2(x, rect.top() + 10.0), name_g, name_color);
+    let mut mx = x + name_w + 8.0;
+    let my = rect.top() + 19.0;
     if m.priority {
-        painter.circle_filled(egui::pos2(mx + 4.0, my), 4.0, RED);
-        mx += 12.0;
+        painter.circle_filled(egui::pos2(mx + 3.0, my), 3.0, RED);
+        mx += 11.0;
     }
     if m.pinned {
-        painter.circle_filled(egui::pos2(mx + 4.0, my), 4.0, ORANGE);
-        mx += 12.0;
+        painter.circle_filled(egui::pos2(mx + 3.0, my), 3.0, pal.sub);
+        mx += 11.0;
     }
     if !m.comments.is_empty() || m.shared {
-        painter.circle_filled(egui::pos2(mx + 4.0, my), 4.0, GREEN);
+        painter.circle_filled(egui::pos2(mx + 3.0, my), 3.0, pal.border);
     }
     let subj_color = if m.read { pal.sub } else { pal.text };
     let has_files = !m.attachments.is_empty();
-    let subj = one_line(ui, &m.subject, 12.5, subj_color, rect.right() - x - 18.0 - if has_files { 74.0 } else { 0.0 });
-    painter.galley(egui::pos2(x, rect.top() + 26.0), subj, subj_color);
+    let subj = one_line(ui, &m.subject, 13.0, subj_color, rect.right() - x - 20.0 - if has_files { 74.0 } else { 0.0 });
+    painter.galley(egui::pos2(x, rect.top() + 29.0), subj, subj_color);
     if has_files {
         let tag = one_line(ui, "Attachment", 10.5, pal.sub, 70.0);
         let tw = tag.size().x;
-        painter.galley(egui::pos2(rect.right() - 16.0 - tw, rect.top() + 28.0), tag, pal.sub);
+        painter.galley(egui::pos2(rect.right() - 18.0 - tw, rect.top() + 31.0), tag, pal.sub);
     }
     let mut snippet = m.snippet();
     if let Some(t) = m.snoozed_until {
         snippet = format!("Snoozed until {}  -  {}", mech::short_when(t, now), snippet);
     }
-    let sn = one_line(ui, &snippet, 12.0, pal.sub, rect.right() - x - 18.0);
-    painter.galley(egui::pos2(x, rect.top() + 43.0), sn, pal.sub);
+    let sn = one_line(ui, &snippet, 12.0, pal.sub, rect.right() - x - 20.0);
+    painter.galley(egui::pos2(x, rect.top() + 47.0), sn, pal.sub);
     resp
 }
 
@@ -2125,7 +2129,7 @@ impl FlintApp {
             let (r, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::hover());
             ui.painter().rect_filled(r, Rounding::same(6.0), ACCENT);
             ui.painter().text(r.center(), Align2::CENTER_CENTER, "F", FontId::proportional(14.0), Color32::WHITE);
-            ui.label(RichText::new("Flint Mail").size(15.0).color(Color32::WHITE).strong());
+            ui.label(RichText::new("Flint Mail").font(theme::serif(17.0)).color(Color32::WHITE));
         });
         ui.add_space(10.0);
         ui.horizontal(|ui| {
@@ -2359,7 +2363,7 @@ impl FlintApp {
             } else {
                 self.folder.name().to_string()
             };
-            ui.label(RichText::new(title).size(17.0).strong().color(pal.text));
+            ui.label(RichText::new(title).font(theme::serif(19.0)).color(pal.text));
             ui.add_space(12.0);
             let search = ui.add(
                 egui::TextEdit::singleline(&mut self.search)
@@ -2492,8 +2496,8 @@ impl FlintApp {
                         let clip = ui.clip_rect();
                         for m in list {
                             let y = ui.cursor().top();
-                            if y + 62.0 < clip.top() || y > clip.bottom() {
-                                ui.allocate_space(egui::vec2(ui.available_width(), 62.0));
+                            if y + ROW_H < clip.top() || y > clip.bottom() {
+                                ui.allocate_space(egui::vec2(ui.available_width(), ROW_H));
                                 continue;
                             }
                             let r = mail_row(ui, m, self.selected == Some(m.id), pal, now);
@@ -2933,7 +2937,7 @@ impl FlintApp {
         egui::ScrollArea::vertical().id_salt("reader-scroll").auto_shrink([false, false]).show(ui, |ui| {
             ui.add_space(6.0);
             egui::Frame::none().inner_margin(egui::Margin::symmetric(22.0, 4.0)).show(ui, |ui| {
-                ui.label(RichText::new(&m.subject).size(21.0).strong().color(pal.text));
+                ui.label(RichText::new(&m.subject).font(theme::serif(25.0)).color(pal.text));
                 ui.horizontal_wrapped(|ui| {
                     for l in &m.labels {
                         chip(ui, l, pal.alt, theme::avatar_color(l));

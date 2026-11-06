@@ -2317,8 +2317,12 @@ impl FlintApp {
                     None => {}
                 }
             }
-            if !self.search.is_empty() && ui.small_button("Clear").clicked() {
-                self.search.clear();
+            if !self.search.is_empty() {
+                let n = self.visible_mails(self.folder).len();
+                ui.label(RichText::new(format!("{} result{}", n, if n == 1 { "" } else { "s" })).size(12.0).color(pal.sub));
+                if ui.small_button("Clear").clicked() {
+                    self.search.clear();
+                }
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(6.0);

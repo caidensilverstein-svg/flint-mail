@@ -90,7 +90,7 @@ impl FlintApp {
         self.last_tray_refresh = Local::now() - Duration::days(1);
     }
 
-    fn dismiss_insight(&mut self, mail_id: u64, kind: &str) {
+    pub(super) fn dismiss_insight(&mut self, mail_id: u64, kind: &str) {
         let Some(m) = self.mail(mail_id) else { return };
         let key = mail_key(&m.account, &m.from_addr, m.received);
         let mut ins = self.insight_or_guess(m);

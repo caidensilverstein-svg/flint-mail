@@ -14,6 +14,7 @@ use crate::ai::{self, AiResult, Target, Tone};
 mod analyzer;
 mod home;
 mod menu;
+mod reader_ai;
 
 use crate::groq;
 use crate::ics;
@@ -351,6 +352,10 @@ enum Act {
     CopyText(String),
     Expand(&'static str),
     Go(Folder),
+    ReplyWith(u64, String),
+    AddEvent(u64),
+    MakeTask(u64),
+    DismissInsight(u64, &'static str),
 }
 
 pub struct FlintApp {
@@ -366,6 +371,7 @@ pub struct FlintApp {
     groq_key_saved: bool,
     groq_test: String,
     copilot_stream_open: bool,
+    task_sources: HashMap<String, String>,
     home_dismissed: HashSet<String>,
     home_cache: Option<(std::time::Instant, Vec<crate::home::Card>)>,
     clip_text: String,
@@ -511,6 +517,7 @@ impl FlintApp {
             groq_key,
             groq_test: String::new(),
             copilot_stream_open: false,
+            task_sources: if shot_mode { HashMap::new() } else { reader_ai::load_task_sources() },
             home_dismissed: HashSet::new(),
             home_cache: None,
             clip_text: String::new(),
@@ -1553,6 +1560,20 @@ impl FlintApp {
                         self.composer = Some(c);
                     }
                 }
+                Act::ReplyWith(id, text) => {
+                    self.apply(vec![Act::Reply(id, false)], ctx);
+                    if let Some(c) = self.composer.as_mut() {
+                        c.body = format!("{}{}", text, c.body);
+                        let l = text.to_lowercase();
+                        if l.contains("get back to you") || l.contains("let me check") {
+                            c.follow_up_days = Some(2);
+                        }
+                        c.focus_top = false;
+                    }
+                }
+                Act::AddEvent(id) => self.event_from_mail(id),
+                Act::MakeTask(id) => self.make_task_from_mail(id),
+                Act::DismissInsight(id, kind) => self.dismiss_insight(id, kind),
                 Act::QuickReply(id, intent) => {
                     if let Some(m) = self.mail(id).cloned() {
                         self.apply(vec![Act::Reply(id, false)], ctx);
@@ -2918,11 +2939,20 @@ impl FlintApp {
                                 ui.label(RichText::new(s).size(13.0).color(pal.text));
                             }
                             None => {
-                                ui.label(RichText::new("Get the gist and the asks in one click.").size(12.5).color(pal.sub));
+                                let gist = self.insight_of(&m).filter(|i| i.from_ai && !i.summary.is_empty()).map(|i| i.summary.clone());
+                                match gist {
+                                    Some(g) => {
+                                        ui.label(RichText::new(g).size(13.0).color(pal.text));
+                                    }
+                                    None => {
+                                        ui.label(RichText::new("Get the gist and the asks in one click.").size(12.5).color(pal.sub));
+                                    }
+                                }
                             }
                         }
                     });
                 ui.add_space(12.0);
+                self.reader_insights(ui, pal, &m, &mut acts);
                 ui.label(RichText::new(&m.body).size(14.0).color(pal.text));
                 ui.add_space(10.0);
                 if !m.attachments.is_empty() {
@@ -2946,6 +2976,7 @@ impl FlintApp {
                     ui.add_space(6.0);
                 }
                 ui.separator();
+                self.reader_replies(ui, pal, &m, &mut acts);
                 ui.label(RichText::new("Quick replies").size(12.0).color(pal.sub));
                 ui.horizontal_wrapped(|ui| {
                     for (label, intent) in [("Sounds good", "interested"), ("Not for me", "not_interested"), ("Thank you!", "thanks")] {
@@ -3552,6 +3583,7 @@ impl FlintApp {
         let now = Local::now();
         let today = now.date_naive();
         let mut done: Option<usize> = None;
+        let mut open_src: Option<String> = None;
         let mut last_group = "";
         for (i, t) in self.tasks.iter().take(40).enumerate() {
             let group = match t.due {
@@ -3590,6 +3622,11 @@ impl FlintApp {
                     };
                     let sub = if when.is_empty() { t.list.clone() } else { format!("{}  -  {}", when, t.list) };
                     ui.label(RichText::new(sub).size(11.0).color(color));
+                    if let Some(k) = self.task_sources.get(&t.title.to_lowercase()) {
+                        if ui.small_button("Open email").clicked() {
+                            open_src = Some(k.clone());
+                        }
+                    }
                 });
             });
             ui.add_space(3.0);
@@ -3598,6 +3635,12 @@ impl FlintApp {
             let t = self.tasks.remove(i);
             let id = t.id;
             std::thread::spawn(move || mac::complete_reminder(&id));
+        }
+        if let Some(k) = open_src {
+            if let Some(id) = self.mails.iter().find(|m| mail_key(&m.account, &m.from_addr, m.received) == k).map(|m| m.id) {
+                let ctx = ui.ctx().clone();
+                self.open_mail(id, &ctx);
+            }
         }
     }
 

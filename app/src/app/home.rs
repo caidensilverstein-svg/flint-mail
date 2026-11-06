@@ -1,6 +1,6 @@
 // Needs You: the screen Flint opens on, plus the card actions shared with the menu bar.
 use super::*;
-use crate::home::{self as hm, Card, EventIn, Kind, MailIn, TaskIn, WaitIn};
+use crate::home::{self as hm, Card, CleanIn, EventIn, Extras, Kind, MailIn, TaskIn, WaitIn};
 use crate::insights;
 
 pub(super) fn task_key(t: &mac::Task) -> String {
@@ -51,11 +51,47 @@ impl FlintApp {
         let events: Vec<EventIn> = self
             .upcoming_events(now)
             .into_iter()
-            .map(|e| EventIn { id: e.id, title: e.title.clone(), start: e.start, end: e.end, has_link: e.link.is_some(), attendees: e.attendees.len() })
+            .map(|e| EventIn { id: e.id, title: e.title.clone(), start: e.start, end: e.end, has_link: e.link.is_some(), attendees: e.attendees.len(), prep: self.prep_line(e) })
             .collect();
         let tasks: Vec<TaskIn> = self.tasks.iter().map(|t| TaskIn { key: task_key(t), title: t.title.clone(), due: t.due }).collect();
         let waits: Vec<WaitIn> = self.sent.iter().filter(|s| !s.replied).map(|s| WaitIn { id: s.id, to: s.to.clone(), subject: s.subject.clone(), sent: s.at }).collect();
-        hm::rank(now, &mails, &events, &tasks, &waits, &self.home_dismissed, max)
+        hm::rank(now, &mails, &events, &tasks, &waits, &self.extras(now), &self.home_dismissed, max)
+    }
+
+    fn prep_line(&self, e: &Event) -> String {
+        if e.attendees.is_empty() {
+            return String::new();
+        }
+        let hit = self.mails.iter().filter(|m| !m.trashed && e.attendees.iter().any(|a| !a.is_empty() && a.to_lowercase().contains(&m.from_addr.to_lowercase()) && !m.from_addr.is_empty())).max_by_key(|m| m.received);
+        match hit {
+            Some(m) => format!("Last email: {}", crate::menumodel::clip(&m.subject, 40)),
+            None => String::new(),
+        }
+    }
+
+    fn extras(&self, now: DateTime<Local>) -> Extras {
+        let mut by_sender: HashMap<&str, (u64, usize, bool, DateTime<Local>)> = HashMap::new();
+        let mut newsletters = 0;
+        for m in self.mails.iter().filter(|m| self.active(m) && !m.done) {
+            if matches!(m.category, Category::Newsletter) && !m.read && (now - m.received) < Duration::days(5) {
+                newsletters += 1;
+            }
+            if m.can_unsubscribe && !m.from_addr.is_empty() {
+                let e = by_sender.entry(m.from_addr.as_str()).or_insert((m.id, 0, true, m.received));
+                e.1 += 1;
+                e.2 &= !m.read;
+                if m.received > e.3 {
+                    e.0 = m.id;
+                    e.3 = m.received;
+                }
+            }
+        }
+        let cleanups = by_sender
+            .into_iter()
+            .filter(|(_, (_, n, all_unread, _))| *all_unread && *n >= 4)
+            .filter_map(|(addr, (id, n, _, _))| self.mail(id).map(|m| CleanIn { id, from: if m.from_name.is_empty() { addr.to_string() } else { m.from_name.clone() }, count: n }))
+            .collect();
+        Extras { cleanups, newsletters }
     }
 
     fn home_cards_cached(&mut self, now: DateTime<Local>) -> Vec<Card> {
@@ -145,6 +181,8 @@ impl FlintApp {
             Kind::Task(key) => self.complete_task_key(key),
             Kind::Found(id) => self.event_from_mail(*id),
             Kind::Deadline(id) => self.open_mail(*id, ctx),
+            Kind::Cleanup(id) => self.apply(vec![Act::Unsubscribe(*id)], ctx),
+            Kind::Digest => self.apply(vec![Act::MarkSectionRead(Section::Newsletters)], ctx),
             Kind::Waiting(id) => {
                 if let Some(s) = self.sent.iter().find(|s| s.id == *id).cloned() {
                     let mut c = Composer::blank();

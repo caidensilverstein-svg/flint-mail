@@ -27,6 +27,19 @@ pub struct EventIn {
     pub end: DateTime<Local>,
     pub has_link: bool,
     pub attendees: usize,
+    pub prep: String,
+}
+
+pub struct CleanIn {
+    pub id: u64,
+    pub from: String,
+    pub count: usize,
+}
+
+#[derive(Default)]
+pub struct Extras {
+    pub cleanups: Vec<CleanIn>,
+    pub newsletters: usize,
 }
 
 pub struct TaskIn {
@@ -50,6 +63,8 @@ pub enum Kind {
     Found(u64),
     Deadline(u64),
     Waiting(u64),
+    Cleanup(u64),
+    Digest,
 }
 
 #[derive(Clone, Debug)]
@@ -93,7 +108,7 @@ fn in_words(mins: i64) -> String {
     }
 }
 
-pub fn rank(now: DateTime<Local>, mails: &[MailIn], events: &[EventIn], tasks: &[TaskIn], waits: &[WaitIn], dismissed: &HashSet<String>, max: usize) -> Vec<Card> {
+pub fn rank(now: DateTime<Local>, mails: &[MailIn], events: &[EventIn], tasks: &[TaskIn], waits: &[WaitIn], extras: &Extras, dismissed: &HashSet<String>, max: usize) -> Vec<Card> {
     let today = now.date_naive();
     let mut cards: Vec<Card> = Vec::new();
 
@@ -154,6 +169,9 @@ pub fn rank(now: DateTime<Local>, mails: &[MailIn], events: &[EventIn], tasks: &
             if e.attendees > 0 {
                 detail.push_str(&format!("  -  {} attendee{}", e.attendees, if e.attendees == 1 { "" } else { "s" }));
             }
+            if !e.prep.is_empty() {
+                detail.push_str(&format!("  -  {}", e.prep));
+            }
             cards.push(Card { id: format!("meet:{}", e.id), kind: Kind::Meeting(e.id), title: e.title.clone(), detail, score, primary: if e.has_link { "Join" } else { "Open" }, secondary: "Dismiss" });
         }
     }
@@ -182,6 +200,21 @@ pub fn rank(now: DateTime<Local>, mails: &[MailIn], events: &[EventIn], tasks: &
                 secondary: "Drop",
             });
         }
+    }
+
+    if let Some(c) = extras.cleanups.iter().filter(|c| c.count >= 4).max_by_key(|c| c.count) {
+        cards.push(Card {
+            id: format!("clean:{}", c.from),
+            kind: Kind::Cleanup(c.id),
+            title: format!("You have not opened {} lately", c.from),
+            detail: format!("{} unread emails. Unsubscribe?", c.count),
+            score: 18.0 + c.count.min(10) as f32,
+            primary: "Unsubscribe",
+            secondary: "Keep",
+        });
+    }
+    if extras.newsletters >= 3 {
+        cards.push(Card { id: "digest".into(), kind: Kind::Digest, title: format!("{} newsletters waiting", extras.newsletters), detail: "Skim them later, or clear them in one go".into(), score: 22.0, primary: "Mark all read", secondary: "Later" });
     }
 
     cards.retain(|c| !dismissed.contains(&c.id));
@@ -213,7 +246,7 @@ mod tests {
         let mut c = mail(3);
         c.needs_reply = true;
         c.vip = true;
-        let cards = rank(now(), &[a, b, c], &[], &[], &[], &HashSet::new(), 5);
+        let cards = rank(now(), &[a, b, c], &[], &[], &[], &Extras::default(), &HashSet::new(), 5);
         assert_eq!(cards[0].kind, Kind::Reply(2));
         assert_eq!(cards[1].kind, Kind::Reply(3));
         assert_eq!(cards[2].kind, Kind::Reply(1));
@@ -224,9 +257,9 @@ mod tests {
         let mut m = mail(1);
         m.needs_reply = true;
         m.urgency = 3;
-        let soon = EventIn { id: 7, title: "Standup".into(), start: now() + Duration::minutes(10), end: now() + Duration::minutes(40), has_link: true, attendees: 4 };
-        let far = EventIn { id: 8, title: "Later".into(), start: now() + Duration::hours(6), end: now() + Duration::hours(7), has_link: false, attendees: 0 };
-        let cards = rank(now(), &[m], &[soon, far], &[], &[], &HashSet::new(), 5);
+        let soon = EventIn { id: 7, title: "Standup".into(), start: now() + Duration::minutes(10), end: now() + Duration::minutes(40), has_link: true, attendees: 4, prep: String::new() };
+        let far = EventIn { id: 8, title: "Later".into(), start: now() + Duration::hours(6), end: now() + Duration::hours(7), has_link: false, attendees: 0, prep: String::new() };
+        let cards = rank(now(), &[m], &[soon, far], &[], &[], &Extras::default(), &HashSet::new(), 5);
         assert_eq!(cards[0].kind, Kind::Meeting(7));
         assert_eq!(cards[0].primary, "Join");
         assert_eq!(cards.len(), 2);
@@ -237,18 +270,18 @@ mod tests {
         let t = |key: &str, days: i64| TaskIn { key: key.into(), title: key.into(), due: Some(now() + Duration::days(days)) };
         let tasks = [t("late", -2), t("today", 0), t("later", 3)];
         let mut dismissed = HashSet::new();
-        let cards = rank(now(), &[], &[], &tasks, &[], &dismissed, 5);
+        let cards = rank(now(), &[], &[], &tasks, &[], &Extras::default(), &dismissed, 5);
         assert_eq!(cards.len(), 2);
         assert_eq!(cards[0].kind, Kind::Task("late".into()));
         dismissed.insert("task:late".to_string());
-        assert_eq!(rank(now(), &[], &[], &tasks, &[], &dismissed, 5).len(), 1);
+        assert_eq!(rank(now(), &[], &[], &tasks, &[], &Extras::default(), &dismissed, 5).len(), 1);
     }
 
     #[test]
     fn waiting_needs_three_days_and_list_is_capped() {
         let w = |id, days| WaitIn { id, to: "Sam".into(), subject: "Quote".into(), sent: now() - Duration::days(days) };
-        assert_eq!(rank(now(), &[], &[], &[], &[w(1, 2)], &HashSet::new(), 5).len(), 0);
-        assert_eq!(rank(now(), &[], &[], &[], &[w(1, 4), w(2, 5), w(3, 6)], &HashSet::new(), 2).len(), 2);
+        assert_eq!(rank(now(), &[], &[], &[], &[w(1, 2)], &Extras::default(), &HashSet::new(), 5).len(), 0);
+        assert_eq!(rank(now(), &[], &[], &[], &[w(1, 4), w(2, 5), w(3, 6)], &Extras::default(), &HashSet::new(), 2).len(), 2);
     }
 
     #[test]
@@ -256,9 +289,20 @@ mod tests {
         let mut m = mail(1);
         m.deadline = Some(("Invoice".into(), now().date_naive() + Duration::days(2)));
         m.event = Some(("Dinner".into(), now() + Duration::days(1)));
-        let cards = rank(now(), &[m], &[], &[], &[], &HashSet::new(), 5);
+        let cards = rank(now(), &[m], &[], &[], &[], &Extras::default(), &HashSet::new(), 5);
         assert!(cards.iter().any(|c| matches!(c.kind, Kind::Deadline(1))));
         assert!(cards.iter().any(|c| matches!(c.kind, Kind::Found(1))));
+    }
+
+    #[test]
+    fn cleanup_and_digest_cards_need_enough_mail() {
+        let few = Extras { cleanups: vec![CleanIn { id: 1, from: "Deals".into(), count: 3 }], newsletters: 2 };
+        assert!(rank(now(), &[], &[], &[], &[], &few, &HashSet::new(), 5).is_empty());
+        let many = Extras { cleanups: vec![CleanIn { id: 1, from: "Deals".into(), count: 9 }], newsletters: 7 };
+        let cards = rank(now(), &[], &[], &[], &[], &many, &HashSet::new(), 5);
+        assert_eq!(cards.len(), 2);
+        assert_eq!(cards[0].kind, Kind::Digest);
+        assert_eq!(cards[1].kind, Kind::Cleanup(1));
     }
 
     #[test]

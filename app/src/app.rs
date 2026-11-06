@@ -356,6 +356,9 @@ enum Act {
     AddEvent(u64),
     MakeTask(u64),
     DismissInsight(u64, &'static str),
+    OfferTimes(u64),
+    ToggleVip(String),
+    SnoozeAt(u64, DateTime<Local>),
 }
 
 pub struct FlintApp {
@@ -373,6 +376,7 @@ pub struct FlintApp {
     copilot_stream_open: bool,
     task_sources: HashMap<String, String>,
     template_query: String,
+    snooze_input: String,
     home_dismissed: HashSet<String>,
     home_cache: Option<(std::time::Instant, Vec<crate::home::Card>)>,
     clip_text: String,
@@ -525,6 +529,7 @@ impl FlintApp {
             groq_test: String::new(),
             copilot_stream_open: false,
             template_query: String::new(),
+            snooze_input: String::new(),
             task_sources: if shot_mode { HashMap::new() } else { reader_ai::load_task_sources() },
             home_dismissed: HashSet::new(),
             home_cache: None,
@@ -1519,6 +1524,32 @@ impl FlintApp {
                         None => "Snoozed to Someday".into(),
                     });
                 }
+                Act::SnoozeAt(id, t) => {
+                    if let Some(m) = self.mail_mut(id) {
+                        m.snoozed_until = Some(t);
+                    }
+                    self.select_next(id);
+                    self.toast(format!("Snoozed until {}", mech::short_when(t, now)));
+                }
+                Act::OfferTimes(id) => {
+                    self.apply(vec![Act::Reply(id, false)], ctx);
+                    let text = self.free_slots(now, 3).iter().map(|s| format!("- {}", s.format("%a %b %-d, %-I:%M %p"))).collect::<Vec<_>>().join("\n");
+                    if let Some(c) = self.composer.as_mut() {
+                        c.body = format!("Here are a few times that work for me:\n{}\n{}", text, c.body);
+                        c.focus_top = false;
+                    }
+                }
+                Act::ToggleVip(addr) => {
+                    if let Some(i) = self.settings.vip.iter().position(|v| v.eq_ignore_ascii_case(&addr)) {
+                        self.settings.vip.remove(i);
+                        self.toast("Removed VIP");
+                    } else {
+                        self.settings.vip.push(addr);
+                        self.toast("Marked as VIP. Their emails rank higher on Needs You");
+                    }
+                    self.save_settings();
+                    self.home_cache = None;
+                }
                 Act::Unsnooze(id) => {
                     if let Some(m) = self.mail_mut(id) {
                         m.snoozed_until = None;
@@ -1939,16 +1970,45 @@ impl FlintApp {
 
 // ---------- drawing helpers ----------
 
+fn parse_clock(t: &str, allow_bare: bool) -> Option<(u32, u32)> {
+    let t = t.to_lowercase();
+    let t = t.trim_matches(|c: char| c == ',' || c == '.');
+    match t {
+        "noon" => return Some((12, 0)),
+        "midnight" => return Some((0, 0)),
+        _ => {}
+    }
+    let (num, pm) = if let Some(n) = t.strip_suffix("pm") { (n, Some(true)) } else if let Some(n) = t.strip_suffix("am") { (n, Some(false)) } else { (t, None) };
+    if pm.is_none() && !allow_bare && !num.contains(':') {
+        return None;
+    }
+    let mut parts = num.split(':');
+    let h = parts.next()?.parse::<u32>().ok()?;
+    let m = match parts.next() {
+        Some(x) => x.parse::<u32>().ok()?,
+        None => 0,
+    };
+    let h24 = match pm {
+        Some(true) if h < 12 => h + 12,
+        Some(false) if h == 12 => 0,
+        _ => h,
+    };
+    (h24 < 24 && m < 60 && parts.next().is_none()).then_some((h24, m))
+}
+
 fn parse_quick_task(input: &str, now: DateTime<Local>) -> (String, Option<DateTime<Local>>) {
     let words: Vec<&str> = input.split_whitespace().collect();
     let mut keep: Vec<&str> = Vec::new();
     let mut day: Option<NaiveDate> = None;
     let mut time: Option<(u32, u32)> = None;
+    let mut rel: Option<Duration> = None;
+    let weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+    let today_idx = now.date_naive().weekday().num_days_from_monday() as i64;
+    let clean = |w: &str| w.to_lowercase().trim_matches(|c: char| c == ',' || c == '.').to_string();
     let mut i = 0;
     while i < words.len() {
-        let w = words[i].to_lowercase();
-        let w = w.trim_matches(|c: char| c == ',' || c == '.');
-        let weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+        let w = clean(words[i]);
+        let next = words.get(i + 1).map(|x| clean(x));
         if w == "today" && day.is_none() {
             day = Some(now.date_naive());
         } else if w == "tonight" && day.is_none() {
@@ -1956,33 +2016,56 @@ fn parse_quick_task(input: &str, now: DateTime<Local>) -> (String, Option<DateTi
             time = time.or(Some((20, 0)));
         } else if w == "tomorrow" && day.is_none() {
             day = Some(now.date_naive() + Duration::days(1));
+        } else if w == "eod" && day.is_none() {
+            day = Some(now.date_naive());
+            time = Some((17, 0));
+        } else if w == "next" && next.as_deref() == Some("week") {
+            day = Some(now.date_naive() + Duration::days(7 - today_idx));
+            i += 2;
+            continue;
+        } else if w == "next" && next.as_deref().map_or(false, |n| weekdays.contains(&n)) {
+            let idx = weekdays.iter().position(|d| Some(*d) == next.as_deref()).unwrap_or(0) as i64;
+            day = Some(now.date_naive() + Duration::days(7 - today_idx + idx));
+            i += 2;
+            continue;
+        } else if w == "in" && i + 2 < words.len() && clean(words[i + 1]).parse::<i64>().is_ok() {
+            let n = clean(words[i + 1]).parse::<i64>().unwrap_or(0);
+            let unit = clean(words[i + 2]);
+            let d = match unit.trim_end_matches('s') {
+                "minute" | "min" => Some(Duration::minutes(n)),
+                "hour" | "hr" => Some(Duration::hours(n)),
+                "day" => Some(Duration::days(n)),
+                "week" => Some(Duration::weeks(n)),
+                _ => None,
+            };
+            match d {
+                Some(d) if unit.starts_with("day") || unit.starts_with("week") => {
+                    day = Some(now.date_naive() + d);
+                    i += 3;
+                    continue;
+                }
+                Some(d) => {
+                    rel = Some(d);
+                    i += 3;
+                    continue;
+                }
+                None => keep.push(words[i]),
+            }
         } else if let Some(idx) = weekdays.iter().position(|d| *d == w) {
-            let today = now.date_naive().weekday().num_days_from_monday() as i64;
-            let mut diff = idx as i64 - today;
+            let mut diff = idx as i64 - today_idx;
             if diff <= 0 {
                 diff += 7;
             }
             day = Some(now.date_naive() + Duration::days(diff));
         } else if w == "at" && i + 1 < words.len() {
-            let t = words[i + 1].to_lowercase();
-            let t = t.trim_matches(|c: char| c == ',' || c == '.');
-            let (num, pm) = if let Some(n) = t.strip_suffix("pm") { (n, Some(true)) } else if let Some(n) = t.strip_suffix("am") { (n, Some(false)) } else { (t, None) };
-            let mut parts = num.split(':');
-            let h = parts.next().and_then(|x| x.parse::<u32>().ok());
-            let m = parts.next().and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
-            if let Some(h) = h {
-                let h24 = match pm {
-                    Some(true) if h < 12 => h + 12,
-                    Some(false) if h == 12 => 0,
-                    _ => h,
-                };
-                if h24 < 24 && m < 60 {
-                    time = Some((h24, m));
-                    i += 2;
-                    continue;
-                }
+            if let Some(t) = parse_clock(words[i + 1], true) {
+                time = Some(t);
+                i += 2;
+                continue;
             }
             keep.push(words[i]);
+        } else if let Some(t) = parse_clock(&w, false).filter(|_| w.ends_with("am") || w.ends_with("pm") || w == "noon" || w == "midnight" || w.contains(':')) {
+            time = Some(t);
         } else {
             keep.push(words[i]);
         }
@@ -1991,6 +2074,10 @@ fn parse_quick_task(input: &str, now: DateTime<Local>) -> (String, Option<DateTi
     let title = keep.join(" ");
     if title.is_empty() {
         return (input.trim().to_string(), None);
+    }
+    if let Some(r) = rel {
+        let t = now + r;
+        return (title, Some(mech::at(t.date_naive(), t.hour(), t.minute())));
     }
     let due = match (day, time) {
         (None, None) => None,
@@ -2871,6 +2958,16 @@ impl FlintApp {
                         }
                     }
                 }
+                ui.separator();
+                let r = ui.add(egui::TextEdit::singleline(&mut self.snooze_input).hint_text("or type: next monday 9am").desired_width(190.0));
+                if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                    let (_, when) = parse_quick_task(&format!("x {}", self.snooze_input), now);
+                    if let Some(t) = when.filter(|t| *t > now) {
+                        acts.push(Act::SnoozeAt(id, t));
+                        self.snooze_input.clear();
+                        ui.close_menu();
+                    }
+                }
             });
             if tool_button(ui, if m.pinned { "Unpin" } else { "Pin" }, pal).clicked() {
                 acts.push(Act::Pin(id));
@@ -2889,6 +2986,11 @@ impl FlintApp {
                 }
                 if ui.button(if m.read { "Mark unread" } else { "Mark read" }).clicked() {
                     acts.push(Act::ToggleRead(id));
+                    ui.close_menu();
+                }
+                let is_vip = self.settings.vip.iter().any(|v| v.eq_ignore_ascii_case(&m.from_addr));
+                if ui.button(if is_vip { "Remove VIP" } else { "Mark sender as VIP" }).clicked() {
+                    acts.push(Act::ToggleVip(m.from_addr.clone()));
                     ui.close_menu();
                 }
                 ui.separator();
@@ -5052,7 +5154,9 @@ impl FlintApp {
             ("Cmd+K", "Command bar"),
             ("Cmd+N", "New email"),
             ("Cmd+, ", "Settings"),
-            ("Cmd+1 / Cmd+2", "Mail / Calendar"),
+            ("Cmd+0 / Cmd+1 / Cmd+2", "Needs You / Mail / Calendar"),
+            ("Slash in a draft", "Type / to insert a template, your signature, or free times"),
+            ("Snooze box", "Type a time like 'next monday 9am' in the Snooze menu"),
             ("j / k", "Next / previous email"),
             ("e", "Mark done"),
             ("p", "Pin"),
@@ -5509,6 +5613,36 @@ mod quick_task_tests {
         assert_eq!(d.unwrap().day(), 6);
         let (t, d) = parse_quick_task("tomorrow", now);
         assert_eq!(t, "tomorrow");
+        assert!(d.is_none());
+    }
+
+    #[test]
+    fn parses_relative_and_bare_times() {
+        let now = Local.with_ymd_and_hms(2026, 11, 5, 10, 0, 0).unwrap();
+        let (t, d) = parse_quick_task("send deck in 2 days", now);
+        assert_eq!(t, "send deck");
+        assert_eq!(d.unwrap().day(), 7);
+        let (t, d) = parse_quick_task("stretch in 3 hours", now);
+        assert_eq!(t, "stretch");
+        assert_eq!(d.unwrap().hour(), 13);
+        let (t, d) = parse_quick_task("lunch with Sam friday noon", now);
+        assert_eq!(t, "lunch with Sam");
+        let d = d.unwrap();
+        assert_eq!((d.day(), d.hour()), (6, 12));
+        let (t, d) = parse_quick_task("call Mom 3:30pm", now);
+        assert_eq!(t, "call Mom");
+        assert_eq!((d.unwrap().hour(), 30), (15, 30));
+        let (t, d) = parse_quick_task("plan offsite next friday", now);
+        assert_eq!(t, "plan offsite");
+        assert_eq!(d.unwrap().day(), 13);
+        let (t, d) = parse_quick_task("review budget next week", now);
+        assert_eq!(t, "review budget");
+        assert_eq!(d.unwrap().day(), 9);
+        let (t, d) = parse_quick_task("send report eod", now);
+        assert_eq!(t, "send report");
+        assert_eq!(d.unwrap().hour(), 17);
+        let (t, d) = parse_quick_task("watch 12 monkeys", now);
+        assert_eq!(t, "watch 12 monkeys");
         assert!(d.is_none());
     }
 }

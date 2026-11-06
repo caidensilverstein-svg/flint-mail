@@ -76,11 +76,14 @@ impl FlintApp {
 
     pub(super) fn reader_replies(&self, ui: &mut Ui, pal: Pal, m: &Mail, acts: &mut Vec<Act>) {
         let Some(ins) = self.insight_of(m) else { return };
-        if ins.replies.is_empty() {
+        if ins.replies.is_empty() && ins.kind != "scheduling" {
             return;
         }
         ui.label(RichText::new("Suggested replies").size(12.0).color(pal.sub));
         ui.horizontal_wrapped(|ui| {
+            if ins.kind == "scheduling" && ui.add(egui::Button::new(RichText::new("Offer 3 times").color(ACCENT)).fill(pal.sel)).clicked() {
+                acts.push(Act::OfferTimes(m.id));
+            }
             for r in &ins.replies {
                 let label = crate::menumodel::clip(r, 46);
                 if ui.add(egui::Button::new(RichText::new(label).color(ACCENT)).fill(pal.sel)).on_hover_text(r).clicked() {

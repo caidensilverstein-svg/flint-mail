@@ -22,6 +22,7 @@ pub enum Target {
     EventNotes(u64),
     Labels,
     Insight(u64),
+    Clip(&'static str),
 }
 
 pub struct AiResult {
@@ -71,7 +72,7 @@ pub fn spawn(engine: Engine, system: String, prompt: String, fallback: String, t
         return;
     }
     let streaming = matches!(target, Target::Summary(_) | Target::Composer | Target::Copilot);
-    let json = matches!(target, Target::Insight(_));
+    let json = matches!(target, Target::Insight(_)) || matches!(target, Target::Clip(k) if k != "summary");
     std::thread::spawn(move || {
         let mut err = None;
         if let Some(k) = &groq {

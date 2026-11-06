@@ -12,6 +12,8 @@ use eframe::egui::{
 
 use crate::ai::{self, AiResult, Target, Tone};
 mod analyzer;
+mod home;
+mod menu;
 
 use crate::groq;
 use crate::ics;
@@ -44,6 +46,7 @@ fn mail_state_path() -> Option<PathBuf> {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
+    Home,
     Mail,
     Calendar,
 }
@@ -363,6 +366,9 @@ pub struct FlintApp {
     groq_key_saved: bool,
     groq_test: String,
     copilot_stream_open: bool,
+    home_dismissed: HashSet<String>,
+    home_cache: Option<(std::time::Instant, Vec<crate::home::Card>)>,
+    clip_text: String,
     insights: HashMap<String, crate::insights::Insight>,
     insight_inflight: HashSet<u64>,
     insight_tried: HashSet<u64>,
@@ -462,6 +468,7 @@ impl FlintApp {
                 .unwrap_or_default()
         };
         let mut settings = settings;
+        let start_home = settings.start_on_home && !shot_mode;
         let mut migrated_now = false;
         if !settings.hotkey_migrated && !shot_mode {
             settings.close_to_tray = true;
@@ -504,6 +511,9 @@ impl FlintApp {
             groq_key,
             groq_test: String::new(),
             copilot_stream_open: false,
+            home_dismissed: HashSet::new(),
+            home_cache: None,
+            clip_text: String::new(),
             insights: if shot_mode { HashMap::new() } else { crate::insights::load() },
             insight_inflight: HashSet::new(),
             insight_tried: HashSet::new(),
@@ -511,7 +521,7 @@ impl FlintApp {
             last_insights_save: std::time::Instant::now(),
             last_analyze: std::time::Instant::now(),
             analyze_pause_until: std::time::Instant::now(),
-            mode: Mode::Mail,
+            mode: if start_home { Mode::Home } else { Mode::Mail },
             folder: Folder::SmartInbox,
             selected: Some(1),
             selected_event: None,
@@ -1112,6 +1122,7 @@ impl FlintApp {
                     }
                 }
                 Target::Insight(id) => self.apply_insight(id, &r.text, r.used_model, r.error.as_deref()),
+                Target::Clip(kind) => self.finish_clip(kind, &r.text, r.used_model),
                 Target::EventNotes(id) => {
                     if let Some(e) = self.events.iter_mut().find(|e| e.id == id) {
                         e.notes = format!("{}\n\nSummary:\n{}", e.notes.trim(), r.text);
@@ -1237,6 +1248,15 @@ impl FlintApp {
                     }
                 }
                 NetResult::Sent { to } => self.toast(format!("Sent to {}", to)),
+                NetResult::MenuText(kind, text) => {
+                    if kind == "task" {
+                        self.add_task_text(&text);
+                        mac::notify("Flint Mail", "Task added");
+                    } else {
+                        self.add_event_text(&text);
+                        mac::notify("Flint Mail", "Event added");
+                    }
+                }
                 NetResult::SendFailed { to, error } => self.toast(format!("Couldn't send to {}: {}", to, error)),
             }
         }
@@ -1362,42 +1382,15 @@ impl FlintApp {
                 return;
             }
             let unread = self.unread_count();
-            // The original refreshes the menu bar agenda once a minute; refresh sooner when the unread count moves.
             let due = (now - self.last_tray_refresh).num_milliseconds() >= mech::TRAY_REFRESH_MS;
             if !due && unread == self.last_tray_unread {
                 return;
             }
             self.last_tray_refresh = now;
             self.last_tray_unread = unread;
-            let upcoming: Vec<(String, DateTime<Local>, DateTime<Local>)> = self
-                .upcoming_events(now)
-                .iter()
-                .filter(|e| e.start.date_naive() == now.date_naive() || e.start - now < Duration::hours(12))
-                .take(3)
-                .map(|e| (e.title.clone(), e.start, e.end))
-                .collect();
-            let mut title = String::new();
-            let mut state = crate::tray::IconState::Default;
-            if let Some((t, start, end)) = upcoming.first() {
-                let in_progress = start.timestamp_millis() - mech::MEETING_LEAD_MS <= now.timestamp_millis() && *end > now;
-                if in_progress {
-                    state = crate::tray::IconState::MeetingInProgress;
-                }
-                if self.settings.menu_bar_countdown && (*start - now) < Duration::hours(1) {
-                    let short: String = t.chars().take(18).collect();
-                    title = format!("{} {}", short, mech::countdown(*start, now));
-                }
-            }
-            if self.settings.menu_bar_unread && unread > 0 {
-                title = if title.is_empty() { format!("{}", unread) } else { format!("{}  |  {}", unread, title) };
-            }
-            let status = if unread == 0 { "Inbox zero".to_string() } else { format!("{} unread in Smart Inbox", unread) };
-            let agenda: Vec<String> = upcoming
-                .iter()
-                .map(|(t, s, _)| format!("{}  {}  ({})", s.format("%-I:%M %p"), t, mech::countdown(*s, now)))
-                .collect();
+            let model = self.menu_model(now);
             if let Some(mb) = self.menubar.as_mut() {
-                mb.update(&title, &status, &agenda, state);
+                mb.update(&model);
             }
         }
     }
@@ -1406,56 +1399,21 @@ impl FlintApp {
     fn handle_tray(&mut self, ctx: &egui::Context) {
         #[cfg(target_os = "macos")]
         {
-            use crate::tray::TrayAction;
             let actions = match &self.menubar {
                 Some(mb) => mb.poll(),
                 None => return,
             };
-            let now = Local::now();
             for a in actions {
-                let show = !matches!(a, TrayAction::Quit);
-                if show {
+                if a.needs_window() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     self.hidden = false;
                 }
-                match a {
-                    TrayAction::Open => {}
-                    TrayAction::Agenda => {
-                        self.mode = Mode::Calendar;
-                        self.cal_view = CalView::Day;
-                        self.cal_anchor = now.date_naive();
-                        self.selected_event = self.upcoming_events(now).first().map(|e| e.id);
-                    }
-                    TrayAction::NewEmail => self.composer = Some(self.fresh_composer()),
-                    TrayAction::Calendar => self.mode = Mode::Calendar,
-                    TrayAction::Snapshot => self.begin_capture(ctx, crate::snap::capture_screen()),
-                    TrayAction::AskAi => {
-                        self.mode = Mode::Mail;
-                        self.copilot_open = true;
-                    }
-                    TrayAction::Settings => self.settings_open = true,
-                    TrayAction::Quit => {
-                        self.quitting = true;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                    TrayAction::Event(i) => {
-                        let id = self.upcoming_events(now).get(i).map(|e| e.id);
-                        if let Some(id) = id {
-                            self.mode = Mode::Calendar;
-                            self.selected_event = Some(id);
-                            if let Some(e) = self.events.iter().find(|e| e.id == id) {
-                                self.cal_anchor = e.start.date_naive();
-                            }
-                        }
-                    }
-                }
+                self.run_menu_action(a, ctx);
             }
         }
     }
-
-    // ---------- actions ----------
 
     fn apply(&mut self, acts: Vec<Act>, ctx: &egui::Context) {
         let had_acts = !acts.is_empty();
@@ -1823,9 +1781,9 @@ impl FlintApp {
             self.cmd_open = false;
         }
         if !ctx.wants_keyboard_input() && self.screenshot.is_none() {
-            let (new_mail, prefs, one, two) = ctx.input(|i| {
+            let (new_mail, prefs, one, two, zero) = ctx.input(|i| {
                 let c = i.modifiers.command && !i.modifiers.shift;
-                (c && i.key_pressed(Key::N), c && i.key_pressed(Key::Comma), c && i.key_pressed(Key::Num1), c && i.key_pressed(Key::Num2))
+                (c && i.key_pressed(Key::N), c && i.key_pressed(Key::Comma), c && i.key_pressed(Key::Num1), c && i.key_pressed(Key::Num2), c && i.key_pressed(Key::Num0))
             });
             if new_mail {
                 self.composer = Some(self.fresh_composer());
@@ -1838,6 +1796,9 @@ impl FlintApp {
             }
             if two {
                 self.mode = Mode::Calendar;
+            }
+            if zero {
+                self.mode = Mode::Home;
             }
         }
         if esc {
@@ -2157,7 +2118,7 @@ impl FlintApp {
         ui.horizontal(|ui| {
             ui.add_space(6.0);
             let w = (ui.available_width() - 14.0) / 2.0;
-            for (label, mode) in [("Mail", Mode::Mail), ("Calendar", Mode::Calendar)] {
+            for (label, mode) in [("Home", Mode::Home), ("Mail", Mode::Mail), ("Calendar", Mode::Calendar)] {
                 let on = self.mode == mode;
                 let b = egui::Button::new(RichText::new(label).size(12.5).color(if on { Color32::WHITE } else { theme::SIDEBAR_TEXT }))
                     .fill(if on { theme::SIDEBAR_SEL } else { Color32::from_rgb(0x1f, 0x21, 0x24) })
@@ -2169,7 +2130,7 @@ impl FlintApp {
         });
         ui.add_space(8.0);
         egui::ScrollArea::vertical().id_salt("sidebar-scroll").show(ui, |ui| {
-            if self.mode == Mode::Mail {
+            if self.mode != Mode::Calendar {
                 self.sidebar_mail(ui);
             } else {
                 self.sidebar_calendar(ui, now);
@@ -2338,6 +2299,8 @@ impl FlintApp {
             ui.add_space(4.0);
             let title = if self.mode == Mode::Calendar {
                 "Calendar".to_string()
+            } else if self.mode == Mode::Home && self.search.is_empty() {
+                "Needs You".to_string()
             } else if !self.search.is_empty() {
                 "Search".to_string()
             } else {
@@ -2351,6 +2314,9 @@ impl FlintApp {
                     .hint_text("Search mail   (from: to: subject: is:unread -label:work)")
                     .desired_width(330.0),
             );
+            if search.changed() && self.mode == Mode::Home {
+                self.mode = Mode::Mail;
+            }
             if search.changed() && self.mode == Mode::Calendar {
                 let q = self.search.trim().to_lowercase();
                 let now = Local::now();
@@ -4794,6 +4760,7 @@ impl FlintApp {
                     self.copilot_open = true;
                 }
                 2 => self.mode = Mode::Calendar,
+                21 => self.mode = Mode::Home,
                 3 => {
                     self.mode = Mode::Calendar;
                     self.event_form = Some(self.new_event_form(None));
@@ -5328,6 +5295,9 @@ impl eframe::App for FlintApp {
         }
 
         match self.mode {
+            Mode::Home => {
+                egui::CentralPanel::default().frame(egui::Frame::none().fill(pal.bg)).show(ctx, |ui| self.home_screen(ui, pal));
+            }
             Mode::Mail => {
                 egui::SidePanel::left("list")
                     .default_width(390.0)

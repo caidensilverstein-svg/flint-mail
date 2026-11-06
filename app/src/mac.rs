@@ -35,7 +35,41 @@ fn osascript(script: &str) -> Result<(), String> {
     }
 }
 
+static QUIET_UNTIL: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+pub fn set_quiet_until(ts: i64) {
+    QUIET_UNTIL.store(ts, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn quiet_until() -> Option<chrono::DateTime<chrono::Local>> {
+    use chrono::TimeZone;
+    let ts = QUIET_UNTIL.load(std::sync::atomic::Ordering::Relaxed);
+    (ts > chrono::Local::now().timestamp()).then(|| chrono::Local.timestamp_opt(ts, 0).single()).flatten()
+}
+
+pub fn clipboard_text() -> String {
+    Command::new("pbpaste").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+}
+
+// Small native text prompt; None when cancelled. Blocks, so call it off the UI thread.
+pub fn ask_text(title: &str, prompt: &str) -> Option<String> {
+    let script = format!(
+        "text returned of (display dialog {} default answer \"\" with title {} buttons {{\"Cancel\", \"Add\"}} default button \"Add\")",
+        applescript_quote(prompt),
+        applescript_quote(title)
+    );
+    let out = Command::new("osascript").arg("-e").arg(script).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let t = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!t.is_empty()).then_some(t)
+}
+
 pub fn notify(title: &str, body: &str) {
+    if quiet_until().is_some() {
+        return;
+    }
     let script = format!(
         "display notification {} with title {}",
         applescript_quote(body),

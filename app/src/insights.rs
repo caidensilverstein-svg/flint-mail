@@ -25,6 +25,7 @@ pub struct InsightTask {
 }
 
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(default)]
 pub struct Insight {
     pub summary: String,
     pub needs_reply: bool,
@@ -38,6 +39,8 @@ pub struct Insight {
     pub replies: Vec<String>,
     pub facts: Vec<String>,
     pub from_ai: bool,
+    pub dismissed: Vec<String>,
+    pub on_calendar: bool,
 }
 
 pub const SYSTEM: &str = "You read one email and return ONLY a JSON object, no prose. Be conservative: leave fields empty rather than guess.";
@@ -62,27 +65,28 @@ pub fn trim_body(body: &str, max: usize) -> String {
     out.chars().take(max).collect::<String>().trim().to_string()
 }
 
+const SCHEMA: &str = "Return JSON with exactly these keys:
+\"summary\": one plain sentence, max 18 words, what this is and what it wants
+\"needs_reply\": true only if a person is waiting for an answer from me
+\"reply_by\": YYYY-MM-DD if a reply deadline is stated or clearly implied, else \"\"
+\"urgency\": 0 none, 1 normal, 2 soon, 3 urgent
+\"kind\": one of person, scheduling, receipt, travel, newsletter, notification
+\"event\": null, or {\"title\",\"start\":\"YYYY-MM-DD HH:MM\",\"end\":\"YYYY-MM-DD HH:MM or empty\",\"location\",\"link\"} only for a real meeting, appointment, trip or reservation with a date
+\"task\": null, or {\"title\":\"short imperative\",\"due\":\"YYYY-MM-DD or empty\"} only if I must do something
+\"deadline\": null, or {\"what\",\"date\":\"YYYY-MM-DD\"} for a stated deadline
+\"replies\": up to 3 short reply options I could send, written as me, only when a reply makes sense (for example an accept, a decline, a 'let me check and get back to you')
+\"facts\": up to 3 short key facts (amounts, confirmation numbers, names)";
+
+fn today_line(today: NaiveDate) -> String {
+    format!("Today is {} ({}).", today.format("%Y-%m-%d"), today.format("%A"))
+}
+
 pub fn build_prompt(m: &Mail, today: NaiveDate) -> String {
-    format!(
-        "Today is {} ({}).\nFrom: {} <{}>\nSubject: {}\n\n{}\n\n\
-Return JSON with exactly these keys:\n\
-\"summary\": one plain sentence, max 18 words, what this email is and what it wants\n\
-\"needs_reply\": true only if a person is waiting for an answer from me\n\
-\"reply_by\": YYYY-MM-DD if a reply deadline is stated or clearly implied, else \"\"\n\
-\"urgency\": 0 none, 1 normal, 2 soon, 3 urgent\n\
-\"kind\": one of person, scheduling, receipt, travel, newsletter, notification\n\
-\"event\": null, or {{\"title\",\"start\":\"YYYY-MM-DD HH:MM\",\"end\":\"YYYY-MM-DD HH:MM or empty\",\"location\",\"link\"}} only for a real meeting, appointment, trip or reservation with a date\n\
-\"task\": null, or {{\"title\":\"short imperative\",\"due\":\"YYYY-MM-DD or empty\"}} only if I must do something\n\
-\"deadline\": null, or {{\"what\",\"date\":\"YYYY-MM-DD\"}} for a stated deadline\n\
-\"replies\": up to 3 short reply options I could send, written as me, only when a reply makes sense (for example an accept, a decline, a 'let me check and get back to you')\n\
-\"facts\": up to 3 short key facts (amounts, confirmation numbers, names)",
-        today.format("%Y-%m-%d"),
-        today.format("%A"),
-        m.from_name,
-        m.from_addr,
-        m.subject,
-        trim_body(&m.body, 3500)
-    )
+    format!("{}\nFrom: {} <{}>\nSubject: {}\n\n{}\n\n{}", today_line(today), m.from_name, m.from_addr, m.subject, trim_body(&m.body, 3500), SCHEMA)
+}
+
+pub fn build_clip_prompt(text: &str, today: NaiveDate) -> String {
+    format!("{}\nThis text came from my clipboard.\n\n{}\n\n{}", today_line(today), trim_body(text, 3500), SCHEMA)
 }
 
 fn s(v: &Value, key: &str) -> String {
@@ -131,6 +135,8 @@ pub fn parse(text: &str) -> Option<Insight> {
         replies: strings("replies", 3),
         facts: strings("facts", 3),
         from_ai: true,
+        dismissed: Vec::new(),
+        on_calendar: false,
     })
 }
 
@@ -153,7 +159,7 @@ pub fn heuristic(m: &Mail) -> Insight {
     let person = matches!(m.category, Category::People);
     let urgent = ["urgent", "asap", "today", "deadline", "by eod", "tomorrow"].iter().any(|k| text.contains(k));
     Insight {
-        summary: crate::ai::sentences(&m.body).into_iter().next().unwrap_or_default().chars().take(140).collect(),
+        summary: crate::ai::sentences(&trim_body(&m.body, 600)).into_iter().next().unwrap_or_default().chars().take(140).collect(),
         needs_reply: person && asks,
         urgency: if urgent { 2 } else { 1 },
         kind: if person { "person".into() } else { "notification".into() },

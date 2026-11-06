@@ -152,6 +152,22 @@ pub struct Settings {
     pub groq_fast_model: String,
     #[serde(default = "default_true")]
     pub ai_analyze: bool,
+    #[serde(default = "default_true")]
+    pub start_on_home: bool,
+    #[serde(default)]
+    pub vip: Vec<String>,
+    #[serde(default)]
+    pub menu_title: String,
+    #[serde(default = "default_true")]
+    pub menu_needs: bool,
+    #[serde(default = "default_true")]
+    pub menu_today: bool,
+    #[serde(default = "default_true")]
+    pub menu_unread: bool,
+    #[serde(default = "default_true")]
+    pub menu_quick: bool,
+    #[serde(default = "default_true")]
+    pub menu_clipboard: bool,
 }
 
 fn default_true() -> bool {
@@ -215,6 +231,14 @@ impl Default for Settings {
             groq_model: default_groq_model(),
             groq_fast_model: default_groq_fast_model(),
             ai_analyze: true,
+            start_on_home: true,
+            vip: Vec::new(),
+            menu_title: String::new(),
+            menu_needs: true,
+            menu_today: true,
+            menu_unread: true,
+            menu_quick: true,
+            menu_clipboard: true,
         }
     }
 }

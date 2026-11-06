@@ -31,6 +31,7 @@ pub enum NetResult {
     SyncFailed { account: String, error: String },
     Sent { to: String },
     SendFailed { to: String, error: String },
+    MenuText(&'static str, String),
 }
 
 const CACHE_VERSION: u32 = 4;

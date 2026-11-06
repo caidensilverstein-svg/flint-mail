@@ -2126,10 +2126,6 @@ impl FlintApp {
             ui.painter().rect_filled(r, Rounding::same(6.0), ACCENT);
             ui.painter().text(r.center(), Align2::CENTER_CENTER, "F", FontId::proportional(14.0), Color32::WHITE);
             ui.label(RichText::new("Flint Mail").size(15.0).color(Color32::WHITE).strong());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add_space(6.0);
-                badge(ui, "PRO");
-            });
         });
         ui.add_space(10.0);
         ui.horizontal(|ui| {
@@ -2203,39 +2199,68 @@ impl FlintApp {
         ui.add_space(2.0);
     }
 
-    fn sidebar_mail(&mut self, ui: &mut Ui) {
-        let groups: [(&str, &[Folder]); 3] = [
-            ("Mail", &[Folder::SmartInbox, Folder::Today, Folder::AllInboxes, Folder::Priority, Folder::Pinned, Folder::Gatekeeper, Folder::SetAside, Folder::Snoozed]),
-            ("Team", &[Folder::Shared, Folder::Assigned]),
-            ("More", &[Folder::FollowUps, Folder::Scheduled, Folder::Sent, Folder::Done, Folder::Trash]),
-        ];
-        for (title, folders) in groups {
-            Self::side_heading(ui, title);
-            for f in folders.iter().copied() {
-                let count = self.folder_count(f);
-                let dot = match f {
-                    Folder::Priority => Some(RED),
-                    Folder::Pinned => Some(ORANGE),
-                    Folder::Gatekeeper => Some(theme::PURPLE),
-                    Folder::Shared | Folder::Assigned => Some(GREEN),
-                    _ => None,
-                };
-                if self.side_item(ui, f.name(), count, self.folder == f && self.search.is_empty(), dot) {
-                    self.folder = f;
-                    self.search.clear();
-                    let first = self.visible_mails(f).first().map(|m| m.id);
-                    if f != Folder::Sent && f != Folder::Scheduled && f != Folder::FollowUps {
-                        self.selected = first;
-                    }
-                }
+    fn folder_row(&mut self, ui: &mut Ui, f: Folder) {
+        let count = self.folder_count(f);
+        let dot = match f {
+            Folder::Priority => Some(RED),
+            Folder::Pinned => Some(ORANGE),
+            Folder::Gatekeeper => Some(theme::PURPLE),
+            Folder::Shared | Folder::Assigned => Some(GREEN),
+            _ => None,
+        };
+        if self.side_item(ui, f.name(), count, self.mode != Mode::Home && self.folder == f && self.search.is_empty(), dot) {
+            self.mode = Mode::Mail;
+            self.folder = f;
+            self.search.clear();
+            let first = self.visible_mails(f).first().map(|m| m.id);
+            if f != Folder::Sent && f != Folder::Scheduled && f != Folder::FollowUps {
+                self.selected = first;
             }
         }
-        Self::side_heading(ui, "Labels");
-        for l in data::LABELS {
-            let n = self.mails.iter().filter(|m| !m.trashed && m.labels.iter().any(|x| x == l)).count();
-            let on = self.search == format!("label:{}", l.to_lowercase());
-            if self.side_item(ui, l, n, on, Some(theme::avatar_color(l))) {
-                self.search = format!("label:{}", l.to_lowercase());
+    }
+
+    fn fold_row(&mut self, ui: &mut Ui, key: &'static str, label: &str, badge: usize, force_open: bool) -> bool {
+        let open = self.expanded.contains(key) || force_open;
+        let text = format!("{}  {}", label, if open { "-" } else { "+" });
+        if self.side_item(ui, &text, if open { 0 } else { badge }, false, None) {
+            if self.expanded.contains(key) {
+                self.expanded.remove(key);
+            } else {
+                self.expanded.insert(key);
+            }
+        }
+        open
+    }
+
+    fn sidebar_mail(&mut self, ui: &mut Ui) {
+        ui.add_space(2.0);
+        for f in [Folder::SmartInbox, Folder::Today, Folder::Pinned, Folder::Snoozed, Folder::Sent, Folder::Done, Folder::Trash] {
+            self.folder_row(ui, f);
+        }
+        let mut more = vec![Folder::AllInboxes, Folder::Priority, Folder::SetAside, Folder::FollowUps, Folder::Scheduled];
+        if self.settings.gatekeeper {
+            more.insert(2, Folder::Gatekeeper);
+        }
+        if self.settings.show_team {
+            more.extend([Folder::Shared, Folder::Assigned]);
+        }
+        ui.add_space(6.0);
+        let badge: usize = more.iter().filter(|f| matches!(f, Folder::Priority | Folder::Gatekeeper | Folder::FollowUps)).map(|f| self.folder_count(*f)).sum();
+        let inside = self.mode != Mode::Home && more.contains(&self.folder) && self.search.is_empty();
+        if self.fold_row(ui, "side-more", "More", badge, inside) {
+            for f in more {
+                self.folder_row(ui, f);
+            }
+        }
+        let label_open = self.search.starts_with("label:");
+        if self.fold_row(ui, "side-labels", "Labels", 0, label_open) {
+            for l in data::LABELS {
+                let n = self.mails.iter().filter(|m| !m.trashed && m.labels.iter().any(|x| x == l)).count();
+                let on = self.search == format!("label:{}", l.to_lowercase());
+                if self.side_item(ui, l, n, on, Some(theme::avatar_color(l))) {
+                    self.mode = Mode::Mail;
+                    self.search = format!("label:{}", l.to_lowercase());
+                }
             }
         }
         Self::side_heading(ui, "Accounts");
@@ -2375,19 +2400,26 @@ impl FlintApp {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(6.0);
-                if tool_button(ui, "Settings", pal).clicked() {
-                    self.settings_open = true;
-                }
-                let ai_label = if self.copilot_open { "Close AI" } else { "Ask AI" };
-                if ui
-                    .add(egui::Button::new(RichText::new(ai_label).color(Color32::WHITE).strong()).fill(theme::PURPLE).rounding(Rounding::same(6.0)))
-                    .clicked()
-                {
-                    self.copilot_open = !self.copilot_open;
-                }
-                if tool_button(ui, "Command  (Cmd+K)", pal).clicked() {
+                ui.menu_button(RichText::new("More").size(12.5), |ui| {
+                    if ui.button(if self.copilot_open { "Close Ask AI" } else { "Ask AI" }).clicked() {
+                        self.copilot_open = !self.copilot_open;
+                        ui.close_menu();
+                    }
+                    if ui.button("Settings").clicked() {
+                        self.settings_open = true;
+                        ui.close_menu();
+                    }
+                    if ui.button("Keyboard shortcuts").clicked() {
+                        self.help_open = true;
+                        ui.close_menu();
+                    }
+                });
+                if tool_button(ui, "Cmd+K", pal).clicked() {
                     self.cmd_open = true;
                     self.cmd_query.clear();
+                }
+                if tool_button(ui, "New Email", pal).clicked() {
+                    self.composer = Some(self.fresh_composer());
                 }
                 if !self.syncing.is_empty() || self.cal_syncing || self.tasks_syncing {
                     ui.label(RichText::new("Syncing...").size(11.5).color(pal.sub));
@@ -4549,6 +4581,8 @@ impl FlintApp {
                     theme_changed |= ui.checkbox(&mut self.settings.dark, "Dark appearance").changed();
                     changed |= ui.checkbox(&mut self.settings.notifications, "Mac notifications (snoozes, follow-ups, meetings)").changed();
                     changed |= ui.checkbox(&mut self.settings.gatekeeper, "Gatekeeper: hold emails from new senders for approval").changed();
+                    changed |= ui.checkbox(&mut self.settings.start_on_home, "Open on the Needs You screen").changed();
+                    changed |= ui.checkbox(&mut self.settings.show_team, "Show Team folders (Shared, Assigned)").changed();
                     ui.horizontal(|ui| {
                         ui.label("Text size");
                         for (label, z) in [("Small", 0.9_f32), ("Normal", 1.0), ("Large", 1.15), ("Larger", 1.3)] {
@@ -4696,10 +4730,26 @@ impl FlintApp {
                     }
                 }
                 SettingsTab::MenuBar => {
-                    ui.label(RichText::new("The menu bar item shows your unread count and a countdown to your next meeting, with today's agenda and quick actions in its menu.").size(12.0).color(pal.sub));
+                    ui.label(RichText::new("The menu bar item lets you act without opening Flint: join your next meeting, tick off tasks, add a task or event, turn clipboard text into a task, and pause notifications.").size(12.0).color(pal.sub));
                     changed |= ui.checkbox(&mut self.settings.menu_bar, "Show in the menu bar (takes effect on next launch)").changed();
-                    changed |= ui.checkbox(&mut self.settings.menu_bar_unread, "Show unread count").changed();
-                    changed |= ui.checkbox(&mut self.settings.menu_bar_countdown, "Show next meeting countdown (within the hour)").changed();
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Title shows");
+                        for (label, key) in [("Smart", "smart"), ("Unread", "unread"), ("Next event", "event"), ("Needs you", "needs"), ("Nothing", "minimal")] {
+                            let on = self.settings.menu_title == key || (self.settings.menu_title.is_empty() && key == "smart");
+                            if ui.selectable_label(on, label).clicked() {
+                                self.settings.menu_title = key.to_string();
+                                changed = true;
+                            }
+                        }
+                    });
+                    changed |= ui.checkbox(&mut self.settings.menu_needs, "Needs you items").changed();
+                    changed |= ui.checkbox(&mut self.settings.menu_today, "Today's events and tasks").changed();
+                    changed |= ui.checkbox(&mut self.settings.menu_unread, "Top unread emails").changed();
+                    changed |= ui.checkbox(&mut self.settings.menu_quick, "Quick task, event and email").changed();
+                    changed |= ui.checkbox(&mut self.settings.menu_clipboard, "From Clipboard actions (uses AI)").changed();
+                    if changed {
+                        self.last_tray_refresh = Local::now() - Duration::days(1);
+                    }
                 }
                 SettingsTab::Integrations => {
                     ui.label(RichText::new("Send any email to these apps from the 'Send to...' button.").size(12.0).color(pal.sub));

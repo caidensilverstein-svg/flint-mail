@@ -1,3 +1,29 @@
+# Overnight summary (read this first)
+
+Everything below was built on the Linux server and checked with `cargo check` and `cargo test`. I could NOT run the app or compile for macOS, so the Mac-only menu bar code (src/tray.rs and the cfg(macos) handlers) is checked by reading the tray-icon 0.19.3 / muda 0.15.3 sources only.
+
+## In the morning
+1. On the Mac, run `git status` in your project folder BEFORE copying anything over. This copy started from GitHub main (7a17984); if the Mac has changes that never reached GitHub, they would be overwritten.
+2. Copy this folder back (rsync as usual), then run `./morning.sh`. It builds, keeps the old app as "Flint Mail (previous).app", installs and opens the new one. If the build fails the old app keeps running; send me the error (most likely place: src/tray.rs).
+3. Settings > AI: paste your Groq key, press Test. The key you pasted in chat is in the chat transcript, so rotate it at console.groq.com and paste the new one.
+4. Groq model ids in Settings (llama-3.3-70b-versatile and llama-3.1-8b-instant) may have been renamed; if Test fails with a model error, change them there.
+
+## What is new
+- Needs You home screen (opens first; Cmd+0): ranked cards for replies waiting, next meeting, tasks due, events/deadlines found in mail, unanswered sent mail, newsletter digest, unsubscribe suggestions.
+- Groq AI with streaming, plus background email analysis (events, tasks, replies, facts). Falls back to Claude key, local Ollama, then on-device.
+- Menu bar rebuilt: smart title, Join meeting, Needs you, tick-off tasks, quick task/event, clipboard to task/event/summary, pause notifications, sync status.
+- Reader: add-to-calendar banner with conflict warning, suggested task, AI reply chips, Offer 3 times, collapsed quoted text.
+- Templates: 20 starters, searchable picker, / insert, save as template, voice-matched drafts, attachment check.
+- Simpler sidebar and toolbar, editorial paper/green theme with serif headings, calmer mail rows, skeleton loading rows, snooze by typing, VIP senders, smarter quick-add dates.
+- Speed: off-screen inbox rows are skipped, search text is cached.
+
+## Not done / needs your call
+- Compile and open on the Mac (no connection from this server to the Mac).
+- Gmail write-back of read/Done/Trash state: untouched (still needs your OK).
+- Hover quick-action buttons on mail rows, signature manager, attachments shelf, calendar week-view crowding, keyboard navigation in the calendar.
+
+---
+
 - Search operators expanded: added to:, subject:, is:read, is:priority, is:done, has:comment, and a leading - to exclude any term/filter. Updated search hint, help overlay, and no-match empty state. Compiles (cargo check clean). Mac: try queries like 'from:maya subject:launch -is:read' in the search box and confirm filtering + negation behave.
 - Synced to GitHub main (7a17984, 15 commits ahead of the old copy). Made the snap module compile off macOS (CoreGraphics/global-hotkey parts stay macOS-only; non-Mac capture_screen returns an error) so cargo check works on Linux again. Compiles. Mac: no behaviour change expected; confirm Cmd+Shift+B capture still works.
 - Pinned the weekday-repeat test to a fixed Monday; it started from "tomorrow" and failed whenever that was a weekend. Test only, no app change. cargo test: 8 passed.

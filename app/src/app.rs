@@ -402,6 +402,7 @@ pub struct FlintApp {
     confirm_future: bool,
     last_sync_error: String,
     refresh_planner: bool,
+    search_blobs: std::cell::RefCell<HashMap<u64, (usize, String)>>,
     mail_state: HashMap<String, MailState>,
     last_mail_sync: std::time::Instant,
     draft: Option<Composer>,
@@ -528,6 +529,7 @@ impl FlintApp {
             confirm_future: false,
             last_sync_error: String::new(),
             refresh_planner: false,
+            search_blobs: Default::default(),
             mail_state: if shot_mode { HashMap::new() } else { mail_state_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default() },
             last_mail_sync: std::time::Instant::now(),
             draft: None,
@@ -763,7 +765,13 @@ impl FlintApp {
             } else if tok == "has:comment" {
                 !m.comments.is_empty()
             } else {
-                format!("{} {} {} {}", m.from_name, m.from_addr, m.subject, m.body).to_lowercase().contains(tok)
+                let mut cache = self.search_blobs.borrow_mut();
+                let entry = cache.entry(m.id).or_default();
+                let fp = m.body.len() + m.subject.len() * 31 + m.from_addr.len() * 7919;
+                if entry.0 != fp {
+                    *entry = (fp, format!("{} {} {} {}", m.from_name, m.from_addr, m.subject, m.body).to_lowercase());
+                }
+                entry.1.contains(tok)
             };
             hit != neg
         })
@@ -2408,7 +2416,13 @@ impl FlintApp {
                                 ui.label(RichText::new(hint).size(12.5).color(pal.sub));
                             });
                         }
+                        let clip = ui.clip_rect();
                         for m in list {
+                            let y = ui.cursor().top();
+                            if y + 62.0 < clip.top() || y > clip.bottom() {
+                                ui.allocate_space(egui::vec2(ui.available_width(), 62.0));
+                                continue;
+                            }
                             let r = mail_row(ui, m, self.selected == Some(m.id), pal, now);
                             if r.clicked() {
                                 acts.push(Act::Select(m.id));
